@@ -7,7 +7,9 @@ public record CiCdEvent(
     string Status,
     string? Conclusion,
     string WorkflowName,
-    DateTime ReceivedAt
+    DateTime ReceivedAt,
+    string Owner,
+    long RunId
 )
 {
     public static CiCdEvent FromWebhookPayload(WebhookPayload payload)
@@ -19,7 +21,9 @@ public record CiCdEvent(
             Status: payload.WorkflowRun.Status,
             Conclusion: payload.WorkflowRun.Conclusion,
             WorkflowName: payload.WorkflowRun.Name,
-            ReceivedAt: DateTime.UtcNow
+            ReceivedAt: DateTime.UtcNow,
+            Owner: payload.Repository.Owner.Login,
+            RunId: payload.WorkflowRun.Id
         );
     }
 
