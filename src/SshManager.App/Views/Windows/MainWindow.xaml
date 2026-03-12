@@ -1,0 +1,170 @@
+<ui:FluentWindow x:Class="SshManager.App.Views.Windows.MainWindow"
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                xmlns:controls="clr-namespace:SshManager.App.Views.Controls"
+                mc:Ignorable="d"
+                Title="SSH Manager"
+                Icon="pack://application:,,,/Resources/app-icon.ico"
+                Height="700" Width="1100"
+                MinHeight="500" MinWidth="800"
+                WindowStartupLocation="CenterScreen"
+                ShowInTaskbar="True"
+                ExtendsContentIntoTitleBar="True"
+                WindowBackdropType="Mica">
+
+    <!-- Keyboard Shortcuts -->
+    <!-- NOTE: Many shortcuts are handled in code-behind (OnPreviewKeyDown) to allow them to pass through
+         to the terminal when the terminal has focus. Only shortcuts that don't conflict with common
+         terminal/bash shortcuts are defined here. -->
+    <ui:FluentWindow.InputBindings>
+        <!-- Host Management - Enter to connect (doesn't conflict with terminal) -->
+        <KeyBinding Key="Return" Command="{Binding Session.ConnectCommand}" CommandParameter="{Binding HostManagement.SelectedHost}" />
+
+        <!-- Terminal Sessions -->
+        <!-- Note: Ctrl+W is NOT used for closing - it passes through to terminal for nano, vim, etc. Use Ctrl+F4 instead -->
+        <KeyBinding Key="F4" Modifiers="Ctrl" Command="{Binding Session.CloseSessionCommand}" CommandParameter="{Binding Session.CurrentSession}" />
+
+        <!-- Refresh -->
+        <KeyBinding Key="F5" Command="{Binding HostManagement.SearchCommand}" />
+    </ui:FluentWindow.InputBindings>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Title Bar (Row 0) -->
+        <Grid Grid.Row="0">
+            <ui:TitleBar ShowMaximize="True"
+                         ShowMinimize="True" />
+            <TextBlock Text="SSH Manager"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       IsHitTestVisible="False" />
+        </Grid>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LeftPanelColumn" Width="280" MinWidth="260" MaxWidth="400" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Left Panel: Host List -->
+            <controls:HostListPanel x:Name="HostListPanel"
+                                    Grid.Column="0"
+                                    DataContext="{Binding}"
+                                    SettingsRequested="HostListPanel_SettingsRequested"
+                                    QuickConnectOverlayRequested="HostListPanel_QuickConnectOverlayRequested"
+                                    KeyboardShortcutsRequested="HostListPanel_KeyboardShortcutsRequested"
+                                    AboutRequested="HostListPanel_AboutRequested"
+                                    HistoryRequested="HostListPanel_HistoryRequested"
+                                    SnippetsRequested="HostListPanel_SnippetsRequested"
+                                    KeyManagerRequested="HostListPanel_KeyManagerRequested"
+                                    RecordingsRequested="HostListPanel_RecordingsRequested"
+                                    SerialQuickConnectRequested="HostListPanel_SerialQuickConnectRequested" />
+
+            <!-- Splitter -->
+            <GridSplitter Grid.Column="1"
+                         Width="4"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Stretch"
+                         Background="Transparent" />
+
+            <!-- Right Panel: Terminal Area -->
+            <Grid Grid.Column="2">
+                <!-- Session Tabs and Terminal - using separate tab strip and content for reliable switching -->
+                <Grid Visibility="{Binding Session.HasActiveSessions, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Tab Strip with Toolbar -->
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Session Tabs -->
+                        <controls:SessionTabStrip x:Name="SessionTabStrip"
+                                                  Grid.Column="0"
+                                                  DataContext="{Binding}"
+                                                  SessionSelectionChanged="SessionTabStrip_SessionSelectionChanged" />
+
+                        <!-- Terminal Toolbar -->
+                        <controls:TerminalToolbar x:Name="TerminalToolbar"
+                                                  Grid.Column="1"
+                                                  DataContext="{Binding}"
+                                                  TunnelBuilderRequested="TerminalToolbar_TunnelBuilderRequested"
+                                                  ManagePortForwardingProfilesRequested="TerminalToolbar_ManagePortForwardingProfilesRequested" />
+                    </Grid>
+
+                    <!-- Terminal Pane Container - supports split panes -->
+                    <Border Grid.Row="1"
+                            Background="{DynamicResource TerminalBackgroundDarkBrush}"
+                            CornerRadius="4"
+                            Margin="4,0,4,4"
+                            ClipToBounds="True">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="BorderBrush" Value="{DynamicResource TerminalBorderBrush}" />
+                                <Setter Property="BorderThickness" Value="1" />
+                                <Style.Triggers>
+                                    <!-- Orange border when broadcast mode is active -->
+                                    <DataTrigger Binding="{Binding BroadcastInput.IsBroadcastMode}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource TerminalBroadcastBorderBrush}" />
+                                        <Setter Property="BorderThickness" Value="2" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <controls:TerminalPaneContainer x:Name="PaneContainer"
+                                                        PaneSplitRequested="PaneContainer_PaneSplitRequested"
+                                                        PaneCloseRequested="PaneContainer_PaneCloseRequested"
+                                                        SessionDisconnected="PaneContainer_SessionDisconnected" />
+                    </Border>
+                </Grid>
+
+                <!-- Welcome Message (when no sessions) -->
+                <controls:WelcomePanel x:Name="WelcomePanel"
+                                       DataContext="{Binding}"
+                                       Visibility="{Binding Session.HasActiveSessions, Converter={StaticResource InverseBoolToVisibilityConverter}}"
+                                       QuickConnectRequested="WelcomePanel_QuickConnectRequested"
+                                       ImportFromFileRequested="WelcomePanel_ImportFromFileRequested"
+                                       ImportFromSshConfigRequested="WelcomePanel_ImportFromSshConfigRequested"
+                                       ImportFromPuttyRequested="WelcomePanel_ImportFromPuttyRequested" />
+            </Grid>
+        </Grid>
+
+        <!-- Quick Connect Overlay (Ctrl+K) - covers entire window when open -->
+        <controls:QuickConnectOverlay x:Name="QuickConnectOverlay"
+                                      Grid.Row="0"
+                                      Grid.RowSpan="2"
+                                      Panel.ZIndex="1000"
+                                      DataContext="{Binding QuickConnectOverlay}" />
+
+        <!-- Snackbar Presenter for notifications -->
+        <ui:SnackbarPresenter x:Name="SnackbarPresenter"
+                              Grid.Row="1"
+                              Style="{StaticResource AnimatedSnackbarPresenter}"
+                              VerticalAlignment="Bottom"
+                              HorizontalAlignment="Stretch"
+                              Margin="16,0,16,16"
+                              Panel.ZIndex="999" />
+
+        <!-- Connection Progress Overlay -->
+        <controls:ConnectionProgressOverlay x:Name="ConnectionProgressOverlay"
+                                            Grid.Row="0"
+                                            Grid.RowSpan="2"
+                                            DataContext="{Binding}"
+                                            Panel.ZIndex="1001" />
+    </Grid>
+</ui:FluentWindow>
