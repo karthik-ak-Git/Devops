@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Represents a reusable profile with common settings that can be applied to multiple SSH hosts.

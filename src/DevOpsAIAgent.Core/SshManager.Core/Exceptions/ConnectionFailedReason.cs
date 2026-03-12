@@ -1,4 +1,4 @@
-namespace SshManager.Core.Exceptions;
+namespace DevOpsAIAgent.Core.Exceptions;
 
 /// <summary>
 /// Enumeration of possible reasons for connection failure.

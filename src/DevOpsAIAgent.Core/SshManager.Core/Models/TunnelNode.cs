@@ -1,4 +1,4 @@
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Represents a node in the visual SSH tunnel builder graph.

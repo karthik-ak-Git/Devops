@@ -1,4 +1,4 @@
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Types of SSH port forwarding.

@@ -1,8 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using System.IO.Ports;
-using SshManager.Core.Validation;
+using DevOpsAIAgent.Core.Validation;
 
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Represents an SSH host configuration.

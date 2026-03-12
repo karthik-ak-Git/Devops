@@ -1,4 +1,4 @@
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Types of connections supported by the application.

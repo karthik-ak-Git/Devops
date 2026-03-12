@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Represents a folder/group for organizing hosts.

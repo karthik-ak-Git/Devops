@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace SshManager.Core.Logging;
+namespace DevOpsAIAgent.Core.Logging;
 
 /// <summary>
 /// Provides structured logging scope helpers for consistent correlation across the application.

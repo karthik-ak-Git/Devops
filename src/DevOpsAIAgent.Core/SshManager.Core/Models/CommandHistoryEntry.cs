@@ -1,4 +1,4 @@
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Represents a command that was executed in a terminal session.

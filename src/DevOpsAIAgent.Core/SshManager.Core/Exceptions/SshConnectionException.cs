@@ -1,4 +1,4 @@
-namespace SshManager.Core.Exceptions;
+namespace DevOpsAIAgent.Core.Exceptions;
 
 /// <summary>
 /// Exception thrown when an SSH connection fails.

@@ -1,4 +1,4 @@
-namespace SshManager.Core.Formatting;
+namespace DevOpsAIAgent.Core.Formatting;
 
 /// <summary>
 /// Shared utility for formatting file sizes and transfer speeds.

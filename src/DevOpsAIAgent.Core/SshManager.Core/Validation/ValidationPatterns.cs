@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 
-namespace SshManager.Core.Validation;
+namespace DevOpsAIAgent.Core.Validation;
 
 /// <summary>
 /// Centralized validation patterns used throughout the application.

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Represents a terminal color theme with all configurable colors.

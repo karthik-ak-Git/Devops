@@ -1,4 +1,4 @@
-namespace SshManager.Core.Exceptions;
+namespace DevOpsAIAgent.Core.Exceptions;
 
 /// <summary>
 /// Base exception class for all SshManager-specific exceptions.

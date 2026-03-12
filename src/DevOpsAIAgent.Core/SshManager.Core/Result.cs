@@ -1,4 +1,4 @@
-namespace SshManager.Core;
+namespace DevOpsAIAgent.Core;
 
 /// <summary>
 /// Represents the result of an operation that can either succeed with a value or fail with an error.

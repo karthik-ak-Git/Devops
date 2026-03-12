@@ -1,4 +1,4 @@
-namespace SshManager.Core;
+namespace DevOpsAIAgent.Core;
 
 /// <summary>
 /// Public constants shared across the SshManager application.

@@ -1,6 +1,6 @@
 using System.IO.Ports;
 
-namespace SshManager.Core.Models;
+namespace DevOpsAIAgent.Core.Models;
 
 /// <summary>
 /// Configuration settings for serial port connections.

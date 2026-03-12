@@ -1,4 +1,4 @@
-namespace SshManager.Core;
+namespace DevOpsAIAgent.Core;
 
 /// <summary>
 /// Provides a predefined color palette for host groups with friendly names.
