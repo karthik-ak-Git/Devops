@@ -8,8 +8,6 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Resources\app-icon.ico</ApplicationIcon>
     <Version>1.0.1</Version>
-    <!-- Inherited from SshManager.Terminal: SSH.NET vs SshNet.Agent version conflict -->
-    <NoWarn>$(NoWarn);NU1608</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,8 +17,6 @@
   <ItemGroup>
     <ProjectReference Include="..\SshManager.Core\SshManager.Core.csproj" />
     <ProjectReference Include="..\SshManager.Data\SshManager.Data.csproj" />
-    <ProjectReference Include="..\SshManager.Security\SshManager.Security.csproj" />
-    <ProjectReference Include="..\SshManager.Terminal\SshManager.Terminal.csproj" />
   </ItemGroup>
 
   <ItemGroup>
