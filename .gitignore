@@ -83,3 +83,5 @@ AGENTS.md
 scripts/
 .claude/
 tests/
+# Environment variables
+.env

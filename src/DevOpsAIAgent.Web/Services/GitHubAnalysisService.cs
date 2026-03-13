@@ -11,14 +11,15 @@ public class GitHubAnalysisService : IGitHubAnalysisService
     private readonly GitHubClient _client;
     private readonly ILogger<GitHubAnalysisService> _logger;
 
-    public GitHubAnalysisService(IConfiguration configuration, ILogger<GitHubAnalysisService> logger)
+    public GitHubAnalysisService(ILogger<GitHubAnalysisService> logger)
     {
         _logger = logger;
 
-        var token = configuration["GitHub:PersonalAccessToken"];
+        // Load GitHub token from environment variable
+        var token = Environment.GetEnvironmentVariable("GITHUB_PAT");
         if (string.IsNullOrWhiteSpace(token))
         {
-            _logger.LogWarning("GitHub Personal Access Token not configured. GitHub API calls may be rate-limited.");
+            _logger.LogWarning("GITHUB_PAT environment variable not set. GitHub API calls will be rate-limited. Configure in .env file.");
         }
 
         _client = new GitHubClient(new ProductHeaderValue("DevOpsAIAgent"))

@@ -14,15 +14,18 @@ namespace DevOpsAIAgent.Web.Controllers.Api;
 public class GitHubWebhookController : ControllerBase
 {
     private readonly IGitHubAnalysisService _analysisService;
+    private readonly IAIAssistantService _aiAssistantService;
     private readonly IHubContext<DashboardHub> _hubContext;
     private readonly ILogger<GitHubWebhookController> _logger;
 
     public GitHubWebhookController(
         IGitHubAnalysisService analysisService,
+        IAIAssistantService aiAssistantService,
         IHubContext<DashboardHub> hubContext,
         ILogger<GitHubWebhookController> logger)
     {
         _analysisService = analysisService;
+        _aiAssistantService = aiAssistantService;
         _hubContext = hubContext;
         _logger = logger;
     }
@@ -64,6 +67,15 @@ public class GitHubWebhookController : ControllerBase
                     payload.WorkflowRun.HeadSha,
                     payload.WorkflowRun.Id);
 
+                _logger.LogInformation("Retrieved failure context for {Repo}. Starting AI analysis...",
+                    payload.Repository.FullName);
+
+                // Get AI analysis and fix suggestion
+                var aiSuggestion = await _aiAssistantService.AnalyzeFailureAsync(errorLog, gitDiff);
+
+                _logger.LogInformation("AI analysis completed for {Repo}. Broadcasting to dashboard...",
+                    payload.Repository.FullName);
+
                 // Broadcast to all connected SignalR clients
                 await _hubContext.Clients.All.SendAsync("ReceivePipelineFailure", new
                 {
@@ -75,13 +87,14 @@ public class GitHubWebhookController : ControllerBase
                     RunId = payload.WorkflowRun.Id,
                     GitDiff = gitDiff,
                     ErrorLog = errorLog,
+                    AiSuggestion = aiSuggestion,
                     Timestamp = DateTime.UtcNow
                 });
 
-                _logger.LogInformation("Pipeline failure broadcast to dashboard clients for {Repo}", 
+                _logger.LogInformation("Pipeline failure with AI suggestion broadcast to dashboard clients for {Repo}", 
                     payload.Repository.FullName);
 
-                return Ok(new { message = "Webhook processed successfully" });
+                return Ok(new { message = "Webhook processed successfully", aiAnalysisIncluded = true });
             }
             catch (Exception ex)
             {
