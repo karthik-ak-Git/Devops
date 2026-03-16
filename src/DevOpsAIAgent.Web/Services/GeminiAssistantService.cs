@@ -1,114 +1,57 @@
+using DevOpsAIAgent.Core.Interfaces.Services;
 using Mscc.GenerativeAI;
 
 namespace DevOpsAIAgent.Web.Services;
 
-/// <summary>
-/// Implementation of AI Assistant Service using Google Gemini.
-/// </summary>
 public class GeminiAssistantService : IAIAssistantService
 {
     private readonly ILogger<GeminiAssistantService> _logger;
     private readonly string _apiKey;
     private readonly string _modelName;
     private readonly bool _isConfigured;
-    private readonly string? _configurationError;
 
     public GeminiAssistantService(ILogger<GeminiAssistantService> logger)
     {
         _logger = logger;
-
-        // Load API key from environment variable
         _apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(_apiKey))
-        {
-            _isConfigured = false;
-            _configurationError = "GEMINI_API_KEY environment variable is not set. Please configure it in your .env file.";
-            _logger.LogWarning(_configurationError);
-            _modelName = "gemini-2.0-flash-exp"; // Default even when not configured
-        }
+        _modelName = Environment.GetEnvironmentVariable("GEMINI_MODEL") ?? "gemini-2.0-flash-exp";
+        _isConfigured = !string.IsNullOrWhiteSpace(_apiKey);
+
+        if (!_isConfigured)
+            _logger.LogWarning("GEMINI_API_KEY not set. AI analysis disabled.");
         else
-        {
-            _isConfigured = true;
-            // Load model name from environment variable or use default
-            _modelName = Environment.GetEnvironmentVariable("GEMINI_MODEL") ?? "gemini-2.0-flash-exp";
-            _logger.LogInformation("Gemini Assistant Service initialized with model: {Model}", _modelName);
-        }
+            _logger.LogInformation("Gemini AI initialized with model: {Model}", _modelName);
     }
 
-    /// <summary>
-    /// Analyzes a CI/CD failure using Gemini AI to determine root cause and suggest fixes.
-    /// </summary>
     public async Task<string> AnalyzeFailureAsync(string errorLog, string gitDiff)
     {
         if (!_isConfigured)
-        {
-            _logger.LogWarning("Cannot analyze failure: {Error}", _configurationError);
-            return GenerateErrorResponse(_configurationError ?? "Gemini AI not configured");
-        }
-
-        _logger.LogInformation("Starting Gemini AI analysis of CI/CD failure");
+            return FormatError("GEMINI_API_KEY not configured. Set it in your .env file.");
 
         try
         {
-            // Initialize Gemini client and model
             var googleAI = new GoogleAI(apiKey: _apiKey);
             var model = googleAI.GenerativeModel(model: _modelName);
 
-            // Construct the prompt
-            var prompt = BuildAnalysisPrompt(errorLog, gitDiff);
+            var prompt = $@"You are an expert DevOps engineer specializing in CI/CD pipeline debugging.
 
-            _logger.LogDebug("Sending request to Gemini model: {Model}", _modelName);
-            _logger.LogDebug("Prompt length: {Length} characters", prompt.Length);
+Analyze the following CI/CD failure and provide:
+1. A clear **Root Cause Analysis**
+2. The exact **code fix** needed
+3. A brief **Explanation** of the fix
 
-            // Generate content
-            var response = await model.GenerateContent(prompt);
-
-            if (response?.Text == null)
-            {
-                _logger.LogWarning("Gemini returned null or empty response");
-                return GenerateErrorResponse("Gemini returned an empty response");
-            }
-
-            var analysisText = response.Text;
-
-            _logger.LogInformation("Gemini analysis completed successfully. Response length: {Length} characters",
-                analysisText.Length);
-
-            return analysisText;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error during Gemini AI analysis");
-            return GenerateErrorResponse(ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Builds the analysis prompt for Gemini.
-    /// </summary>
-    private string BuildAnalysisPrompt(string errorLog, string gitDiff)
-    {
-        return $@"You are an expert DevOps engineer and Senior C#/.NET developer specializing in CI/CD pipeline debugging and automated code fixes.
-
-**Your Task:**
-Analyze the following CI/CD build/test failure and provide:
-1. A clear, concise **Root Cause Analysis** explaining what went wrong and why
-2. The exact **C# code snippet** that needs to be changed to fix the issue
-3. A brief **Explanation** of why this fix resolves the problem
-
-**Format your response in Markdown with this structure:**
+Format in Markdown:
 
 ## Root Cause Analysis
-[Explain what went wrong and why - be specific about the error]
+[What went wrong and why]
 
 ## Recommended Fix
-```csharp
-// Provide the exact C# code snippet that needs to be changed
-// Include context: show the problematic code and the fixed version
+```
+// The exact code change needed
 ```
 
 ## Explanation
-[Brief explanation of why this fix resolves the issue and prevents future occurrences]
+[Why this fix resolves the issue]
 
 ---
 
@@ -117,53 +60,63 @@ Analyze the following CI/CD build/test failure and provide:
 {gitDiff}
 ```
 
----
-
-## Error Log (From the failed workflow run)
+## Error Log
 ```
 {errorLog}
 ```
 
----
+Be specific, actionable, and provide copy-paste ready fixes.";
 
-**Instructions:**
-- Be specific and actionable
-- Focus on the most likely root cause based on the evidence
-- Provide copy-paste ready code fixes
-- If multiple issues exist, prioritize the critical one
-- Use C# best practices and .NET conventions
-";
+            var response = await model.GenerateContent(prompt);
+            if (response?.Text == null)
+                return FormatError("Gemini returned an empty response.");
+
+            _logger.LogInformation("AI analysis completed ({Length} chars)", response.Text.Length);
+            return response.Text;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Gemini AI analysis failed");
+            return FormatError(ex.Message);
+        }
     }
 
-    /// <summary>
-    /// Generates an error response when AI analysis fails.
-    /// </summary>
-    private string GenerateErrorResponse(string errorMessage)
+    public async Task<string> SuggestIncidentResolutionAsync(string incidentDescription, IEnumerable<string> similarPastAnalyses)
     {
-        return $@"## Error During AI Analysis
+        if (!_isConfigured)
+            return FormatError("GEMINI_API_KEY not configured.");
 
-An error occurred while analyzing the failure with Gemini AI:
+        try
+        {
+            var googleAI = new GoogleAI(apiKey: _apiKey);
+            var model = googleAI.GenerativeModel(model: _modelName);
 
-```
-{errorMessage}
-```
+            var pastContext = string.Join("\n---\n", similarPastAnalyses.Take(3));
+            var prompt = $@"You are a DevOps incident resolution expert.
 
-### Manual Review Required
+Given this incident and similar past resolutions, suggest a resolution plan.
 
-Please review the error log and git diff manually. Common issues to check:
+## Current Incident
+{incidentDescription}
 
-1. **Syntax Errors** - Missing semicolons, brackets, or quotes
-2. **Null Reference** - Check for null checks on objects
-3. **Type Mismatches** - Verify variable types and conversions
-4. **Missing Dependencies** - Ensure NuGet packages are restored
-5. **Configuration Issues** - Check appsettings.json and environment variables
+## Similar Past Resolutions
+{(string.IsNullOrWhiteSpace(pastContext) ? "No similar incidents found." : pastContext)}
 
-### Troubleshooting Steps:
-1. Review the git diff for obvious syntax errors
-2. Check the error log for stack traces
-3. Verify all dependencies are installed
-4. Run the build locally to reproduce the issue
-5. Check for breaking changes in updated packages
-";
+Provide a concise resolution plan in Markdown with:
+1. **Immediate Actions** - Steps to take now
+2. **Root Cause** - Most likely cause based on patterns
+3. **Prevention** - How to prevent recurrence";
+
+            var response = await model.GenerateContent(prompt);
+            return response?.Text ?? FormatError("Empty response from AI.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AI incident resolution suggestion failed");
+            return FormatError(ex.Message);
+        }
     }
+
+    private static string FormatError(string message) =>
+        $"## AI Analysis Unavailable\n\n{message}\n\nPlease review the error log and git diff manually.";
 }

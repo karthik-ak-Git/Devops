@@ -1,3 +1,4 @@
+using DevOpsAIAgent.Web.Models.DTOs;
 using DevOpsAIAgent.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -84,14 +85,34 @@ public class WebhookConfigurationController : ControllerBase
     /// <param name="request">Webhook creation request.</param>
     /// <returns>Result of webhook creation.</returns>
     [HttpPost("configure")]
-    public async Task<IActionResult> ConfigureWebhook([FromBody] WebhookConfigurationRequest request)
+    public async Task<IActionResult> ConfigureWebhook([FromBody] WebhookConfigurationRequest? request)
     {
+        // Validate request
+        if (request == null)
+        {
+            _logger.LogWarning("Webhook configuration request is null");
+            return BadRequest(new 
+            { 
+                success = false, 
+                message = "Request body is required" 
+            });
+        }
+
         string owner, repo;
 
         // Support both "owner/repo" format and separate fields
         if (!string.IsNullOrWhiteSpace(request.FullName) && request.FullName.Contains('/'))
         {
-            var parts = request.FullName.Split('/');
+            var parts = request.FullName.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 2)
+            {
+                _logger.LogWarning("Invalid FullName format: {FullName}", request.FullName);
+                return BadRequest(new 
+                { 
+                    success = false, 
+                    message = "FullName must be in 'owner/repo' format" 
+                });
+            }
             owner = parts[0];
             repo = parts[1];
         }
@@ -102,31 +123,93 @@ public class WebhookConfigurationController : ControllerBase
         }
         else
         {
-            return BadRequest(new { success = false, message = "Either 'FullName' (owner/repo) or both 'Owner' and 'Repo' are required" });
+            _logger.LogWarning("Missing repository identification: FullName={FullName}, Owner={Owner}, Repo={Repo}", 
+                request.FullName, request.Owner, request.Repo);
+            return BadRequest(new 
+            { 
+                success = false, 
+                message = "Either 'FullName' (owner/repo) or both 'Owner' and 'Repo' are required" 
+            });
         }
 
-        // Get the base URL from the request
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
-        var webhookUrl = $"{baseUrl}/api/webhooks/github";
+        // Get the webhook URL - use custom if provided, otherwise build from request
+        string webhookUrl = request.WebhookUrl;
+
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            // Build from request
+            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            webhookUrl = $"{baseUrl}/api/webhooks/github";
+        }
+
+        // Validate webhook URL
+        if (!webhookUrl.StartsWith("https://") && !webhookUrl.StartsWith("http://"))
+        {
+            _logger.LogWarning("Invalid webhook URL format: {WebhookUrl}", webhookUrl);
+            return BadRequest(new 
+            { 
+                success = false, 
+                message = "Webhook URL must start with http:// or https://" 
+            });
+        }
+
+        // Warn if using localhost
+        if (webhookUrl.Contains("localhost") || webhookUrl.Contains("127.0.0.1"))
+        {
+            _logger.LogWarning("Webhook URL is localhost: {WebhookUrl}", webhookUrl);
+            return BadRequest(new 
+            { 
+                success = false, 
+                message = "Webhook URL cannot use localhost. Please use ngrok:\n1. Download: https://ngrok.com/download\n2. Run: ngrok http 5120\n3. Use the ngrok URL (e.g., https://abc123.ngrok.io/api/webhooks/github)" 
+            });
+        }
 
         _logger.LogInformation("Configuring webhook for {Owner}/{Repo} with URL: {WebhookUrl}",
             owner, repo, webhookUrl);
 
-        var result = await _webhookService.CreateWebhookAsync(owner, repo, webhookUrl);
+        // Prepare webhook events (default to workflow_run if none selected)
+        var events = request.Events ?? new List<string>();
+        if (events.Count == 0)
+        {
+            events.Add("workflow_run");
+        }
 
-        return result.Success
-            ? Ok(new
+        _logger.LogInformation("Webhook events: {Events}", string.Join(", ", events));
+
+        try
+        {
+            var result = await _webhookService.CreateWebhookAsync(owner, repo, webhookUrl, events);
+
+            if (result.Success)
             {
-                success = true,
-                message = result.Message,
-                webhookId = result.WebhookId,
-                webhookUrl = result.WebhookUrl
-            })
-            : BadRequest(new
+                _logger.LogInformation("Webhook successfully configured for {Owner}/{Repo}", owner, repo);
+                return Ok(new
+                {
+                    success = true,
+                    message = result.Message,
+                    webhookId = result.WebhookId,
+                    webhookUrl = result.WebhookUrl
+                });
+            }
+            else
+            {
+                _logger.LogWarning("Webhook configuration failed for {Owner}/{Repo}: {Message}", owner, repo, result.Message);
+                return StatusCode(403, new
+                {
+                    success = false,
+                    message = result.Message
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error configuring webhook for {Owner}/{Repo}", owner, repo);
+            return StatusCode(500, new
             {
                 success = false,
-                message = result.Message
+                message = $"Error configuring webhook: {ex.Message}"
             });
+        }
     }
 
     /// <summary>
@@ -171,12 +254,3 @@ public class WebhookConfigurationController : ControllerBase
             : BadRequest(new { success = false, message = $"Failed to delete webhook {hookId}" });
     }
 }
-
-/// <summary>
-/// Request model for webhook configuration.
-/// </summary>
-public record WebhookConfigurationRequest(
-    string? Owner = null,
-    string? Repo = null,
-    string? FullName = null
-);

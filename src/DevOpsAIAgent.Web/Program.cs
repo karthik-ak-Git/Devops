@@ -39,6 +39,9 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 // Register GitHub Analysis Service
 builder.Services.AddScoped<IGitHubAnalysisService, GitHubAnalysisService>();
 
+// Register Webhook Security Service
+builder.Services.AddScoped<IWebhookSecurityService, WebhookSecurityService>();
+
 // Register Webhook Configuration Service
 builder.Services.AddScoped<IWebhookConfigurationService, WebhookConfigurationService>();
 

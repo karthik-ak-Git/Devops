@@ -451,6 +451,60 @@
             color: var(--accent-green);
             border: 1px solid var(--accent-green);
         }
+
+        /* Logs Panel Styles */
+        #failuresPanel, #logsPanel {
+            display: none;
+        }
+
+        #failuresPanel.active, #logsPanel.active {
+            display: block;
+        }
+
+        #logsPanel {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        #logsList {
+            flex: 1;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            background-color: var(--bg-darker);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.75rem;
+        }
+
+        .log-entry {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .log-entry.info {
+            color: var(--accent-blue);
+        }
+
+        .log-entry.success {
+            color: var(--accent-green);
+        }
+
+        .log-entry.warning {
+            color: var(--accent-yellow);
+        }
+
+        .log-entry.error {
+            color: var(--accent-red);
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            margin-right: 0.5rem;
+        }
     </style>
 </head>
 <body>
@@ -470,15 +524,35 @@
     <!-- Main Container -->
     <div class="container-fluid main-container">
         <div class="row h-100">
-            <!-- Left Sidebar: Recent Failures -->
+            <!-- Left Sidebar: Recent Failures & Logs -->
             <div class="col-md-3 sidebar">
-                <h5>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                        <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
-                    </svg>
-                    Recent Failures (<span id="failureCount">0</span>)
-                <div id="emptyState" class="empty-state">
+                <!-- Tabs for switching between Failures and Logs -->
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+                    <button onclick="switchSidebarTab('failures')" id="failuresTab" style="flex: 1; padding: 0.5rem; background: var(--border-color); color: var(--text-primary); border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.3rem;">
+                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                        </svg>
+                        Failures
+                    </button>
+                    <button onclick="switchSidebarTab('logs')" id="logsTab" style="flex: 1; padding: 0.5rem; background: transparent; color: var(--text-secondary); border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.3rem;">
+                            <path d="M4 .5a.5.5 0 0 0-.5.5v12a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V.5a.5.5 0 0 0-.5-.5H4zm0 1h8v12H4V1.5z"/>
+                        </svg>
+                        Logs
+                    </button>
+                </div>
+
+                <!-- Failures Tab -->
+                <div id="failuresPanel">
+                    <h5>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                            <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
+                        </svg>
+                        Recent Failures (<span id="failureCount">0</span>)
+                    </h5>
+                    <div id="failureList"></div>
+                    <div id="emptyState" class="empty-state">
                     <div class="empty-state-icon">
                         <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" fill="currentColor" viewBox="0 0 16 16">
                             <path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
@@ -539,6 +613,34 @@
                                     </label>
                                     <input type="text" id="webhookName" readonly
                                            style="width: 100%; padding: 0.6rem; background: var(--bg-darker); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-secondary); font-size: 0.9rem;">
+                                </div>
+
+                                <div class="mb-3" id="webhookUrlSection" style="display: none;">
+                                    <label for="webhookUrl" style="color: var(--text-secondary); font-size: 0.85rem; display: block; margin-bottom: 0.5rem;">
+                                        Webhook URL
+                                        <span style="color: var(--accent-green); font-weight: 600; margin-left: 0.5rem; font-size: 0.75rem;">Auto-configured</span>
+                                    </label>
+                                    <input type="text" id="webhookUrl" placeholder="Auto-detected from ngrok or server URL"
+                                           style="width: 100%; padding: 0.6rem; background: var(--bg-darker); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-secondary); font-size: 0.9rem;" readonly>
+                                    <small style="display: block; margin-top: 0.3rem; color: var(--text-secondary); font-size: 0.75rem;">
+                                        Automatically configured. To use custom URL, edit the field below.
+                                    </small>
+                                </div>
+
+                                <div class="mb-3" id="webhookEventsSection" style="display: none;">
+                                    <label style="color: var(--text-secondary); font-size: 0.85rem; display: block; margin-bottom: 0.5rem;">
+                                        Webhook Events
+                                    </label>
+                                    <div style="display: flex; gap: 1rem; padding: 0.5rem; background: var(--bg-darker); border: 1px solid var(--border-color); border-radius: 6px;">
+                                        <label style="display: flex; align-items: center; color: var(--text-primary); font-size: 0.85rem; cursor: pointer;">
+                                            <input type="checkbox" id="eventPush" checked style="margin-right: 0.5rem; cursor: pointer;">
+                                            Push
+                                        </label>
+                                        <label style="display: flex; align-items: center; color: var(--text-primary); font-size: 0.85rem; cursor: pointer;">
+                                            <input type="checkbox" id="eventWorkflowRun" checked style="margin-right: 0.5rem; cursor: pointer;">
+                                            Workflow Run
+                                        </label>
+                                    </div>
                                 </div>
 
                                 <div id="webhookConfigStatus" style="margin-bottom: 1rem; display: none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
@@ -623,6 +725,20 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Logs Panel -->
+                <div id="logsPanel">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h5 style="margin: 0;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M4 .5a.5.5 0 0 0-.5.5v12a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V.5a.5.5 0 0 0-.5-.5H4zm0 1h8v12H4V1.5z"/>
+                            </svg>
+                            System Logs
+                        </h5>
+                        <button onclick="clearLogs()" style="background: var(--accent-red); color: white; border: none; padding: 0.3rem 0.6rem; border-radius: 4px; font-size: 0.75rem; cursor: pointer;">Clear</button>
+                    </div>
+                    <div id="logsList"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -646,10 +762,68 @@
         let failures = [];
         let selectedFailureId = null;
         let connection = null;
+        let logs = [];
+
+        // Logging function
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            logs.push({ timestamp, message, type });
+
+            // Keep only last 100 logs
+            if (logs.length > 100) {
+                logs.shift();
+            }
+
+            // Add to UI
+            const logsList = document.getElementById("logsList");
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.innerHTML = `<span class="log-time">[${timestamp}]</span>${message}`;
+            logsList.appendChild(logEntry);
+            logsList.scrollTop = logsList.scrollHeight;
+        }
+
+        function clearLogs() {
+            logs = [];
+            document.getElementById("logsList").innerHTML = '';
+            addLog("Logs cleared", 'info');
+        }
+
+        function switchSidebarTab(tab) {
+            // Hide all panels
+            document.getElementById("failuresPanel").classList.remove("active");
+            document.getElementById("logsPanel").classList.remove("active");
+
+            // Hide all tab buttons background
+            document.getElementById("failuresTab").style.background = "transparent";
+            document.getElementById("failuresTab").style.color = "var(--text-secondary)";
+            document.getElementById("logsTab").style.background = "transparent";
+            document.getElementById("logsTab").style.color = "var(--text-secondary)";
+
+            // Show selected tab
+            if (tab === 'failures') {
+                document.getElementById("failuresPanel").classList.add("active");
+                document.getElementById("failuresTab").style.background = "var(--border-color)";
+                document.getElementById("failuresTab").style.color = "var(--text-primary)";
+            } else if (tab === 'logs') {
+                document.getElementById("logsPanel").classList.add("active");
+                document.getElementById("logsTab").style.background = "var(--border-color)";
+                document.getElementById("logsTab").style.color = "var(--text-primary)";
+            }
+        }
+
+        // Initialize failures panel as active
+        document.addEventListener("DOMContentLoaded", function() {
+            document.getElementById("failuresPanel").classList.add("active");
+            document.getElementById("failuresTab").style.background = "var(--border-color)";
+            document.getElementById("failuresTab").style.color = "var(--text-primary)";
+            addLog("Dashboard initialized", "info");
+        });
 
         // Initialize SignalR Connection
         async function initializeSignalR() {
             try {
+                addLog("Connecting to SignalR...", "info");
                 // Use absolute URL with correct hub path
                 const hubUrl = `${window.location.origin}/api/hubs/dashboard`;
 
@@ -661,29 +835,32 @@
 
                 // Handle incoming pipeline failures
                 connection.on("ReceivePipelineFailure", function (payload) {
-                    console.log("Received pipeline failure:", payload);
+                    addLog(`Received pipeline failure from ${payload.Repo}`, "error");
                     handleNewFailure(payload);
                 });
 
                 // Connection state handlers
                 connection.onreconnecting(() => {
                     updateConnectionStatus("Reconnecting...", false);
+                    addLog("SignalR reconnecting...", "warning");
                 });
 
                 connection.onreconnected(() => {
                     updateConnectionStatus("Connected", true);
+                    addLog("SignalR reconnected", "success");
                 });
 
                 connection.onclose(() => {
                     updateConnectionStatus("Disconnected", false);
+                    addLog("SignalR disconnected, retrying in 5s...", "warning");
                     setTimeout(() => initializeSignalR(), 5000);
                 });
 
                 await connection.start();
                 updateConnectionStatus("Connected", true);
-                console.log("SignalR connected successfully");
+                addLog("SignalR connected successfully", "success");
             } catch (err) {
-                console.error("SignalR connection error:", err);
+                addLog(`SignalR connection error: ${err.message}`, "error");
                 updateConnectionStatus("Connection Failed", false);
                 setTimeout(() => initializeSignalR(), 5000);
             }
@@ -997,6 +1174,17 @@
             document.getElementById("webhookName").value = webhookName;
             document.getElementById("webhookNameSection").style.display = "block";
 
+            // Show webhook URL input
+            const webhookUrlInput = document.getElementById("webhookUrl");
+            const currentUrl = `${window.location.origin}/api/webhooks/github`;
+
+            // Auto-fill webhook URL
+            webhookUrlInput.value = currentUrl;
+            addLog(`Webhook URL set to: ${currentUrl}`, "info");
+
+            document.getElementById("webhookUrlSection").style.display = "block";
+            document.getElementById("webhookEventsSection").style.display = "block";
+
             // Enable configure button
             document.getElementById("configureWebhookBtn").disabled = false;
 
@@ -1013,6 +1201,25 @@
 
             const statusDiv = document.getElementById("webhookConfigStatus");
             const btn = document.getElementById("configureWebhookBtn");
+            const webhookUrlInput = document.getElementById("webhookUrl");
+            let webhookUrl = webhookUrlInput.value.trim();
+
+            // Validate webhook URL
+            if (!webhookUrl) {
+                webhookUrl = `${window.location.origin}/api/webhooks/github`;
+
+                // Check if using localhost
+                if (webhookUrl.includes("localhost") || webhookUrl.includes("127.0.0.1")) {
+                    showWebhookStatus("⚠️ Webhook URL cannot be localhost. Please:\n1. Download ngrok: https://ngrok.com/download\n2. Run: ngrok http 5120\n3. Copy the ngrok URL (e.g., https://abc123.ngrok.io)\n4. Paste it in the Webhook URL field\n5. Try again", false);
+                    return;
+                }
+            }
+
+            // Validate URL format
+            if (!webhookUrl.startsWith("https://") && !webhookUrl.startsWith("http://")) {
+                showWebhookStatus("Invalid webhook URL format. Must start with http:// or https://", false);
+                return;
+            }
 
             // Show loading state
             const originalBtnText = btn.innerHTML;
@@ -1021,7 +1228,26 @@
             statusDiv.style.display = "none";
 
             try {
-                console.log(`Configuring webhook for ${selectedRepository.fullName}`);
+                console.log(`Configuring webhook for ${selectedRepository.fullName} with URL: ${webhookUrl}`);
+
+                // Collect selected webhook events
+                const events = [];
+                const pushCheckbox = document.getElementById("eventPush");
+                const workflowCheckbox = document.getElementById("eventWorkflowRun");
+
+                if (pushCheckbox && pushCheckbox.checked) {
+                    events.push("push");
+                }
+                if (workflowCheckbox && workflowCheckbox.checked) {
+                    events.push("workflow_run");
+                }
+
+                // Default to workflow_run if none selected
+                if (events.length === 0) {
+                    events.push("workflow_run");
+                }
+
+                addLog(`Webhook events selected: ${events.join(", ")}`, "info");
 
                 // Use absolute URL
                 const apiUrl = `${window.location.origin}/api/webhooks/configure`;
@@ -1031,7 +1257,9 @@
                         "Content-Type": "application/json"
                     },
                     body: JSON.stringify({
-                        fullName: selectedRepository.fullName
+                        fullName: selectedRepository.fullName,
+                        webhookUrl: webhookUrl,
+                        events: events
                     })
                 });
 
@@ -1055,6 +1283,7 @@
                         dropdown.value = "";
                         document.getElementById("selectedRepoInfo").style.display = "none";
                         document.getElementById("webhookNameSection").style.display = "none";
+                        document.getElementById("webhookUrlSection").style.display = "none";
                         document.getElementById("configureWebhookBtn").disabled = true;
                     }, 3000);
                 } else {
