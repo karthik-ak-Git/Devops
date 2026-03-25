@@ -1,0 +1,199 @@
+using System.Text;
+using Octokit;
+using DevOpsAIAgent.Core.Interfaces.Services;
+
+namespace DevOpsAIAgent.API.Services;
+
+/// <summary>
+/// Service for GitHub API integration and failure analysis
+/// </summary>
+public class GitHubAnalysisService : IGitHubAnalysisService
+{
+    private readonly ILogger<GitHubAnalysisService> _logger;
+    private readonly IConfiguration _configuration;
+    private readonly GitHubClient _githubClient;
+
+    public GitHubAnalysisService(
+        ILogger<GitHubAnalysisService> logger,
+        IConfiguration configuration,
+        IHttpClientFactory httpClientFactory)
+    {
+        _logger = logger;
+        _configuration = configuration;
+
+        // Initialize GitHub client
+        var githubToken = _configuration["GitHub:Token"] ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+
+        _githubClient = new GitHubClient(new ProductHeaderValue("DevOpsAIAgent"))
+        {
+            Credentials = !string.IsNullOrEmpty(githubToken)
+                ? new Credentials(githubToken)
+                : Credentials.Anonymous
+        };
+
+        if (string.IsNullOrEmpty(githubToken))
+        {
+            _logger.LogWarning("No GitHub token configured. API rate limits will be restricted.");
+        }
+    }
+
+    /// <summary>
+    /// Get failure context including git diff and error logs for a failed workflow run
+    /// </summary>
+    /// <param name="owner">Repository owner</param>
+    /// <param name="repo">Repository name</param>
+    /// <param name="commitHash">Commit hash</param>
+    /// <param name="runId">Workflow run ID</param>
+    /// <returns>Git diff and error log</returns>
+    public async Task<(string GitDiff, string ErrorLog)> GetFailureContextAsync(
+        string owner,
+        string repo,
+        string commitHash,
+        long runId)
+    {
+        try
+        {
+            _logger.LogInformation("Getting failure context for {Owner}/{Repo} commit {CommitHash} run {RunId}",
+                owner, repo, commitHash, runId);
+
+            var gitDiffTask = GetGitDiffAsync(owner, repo, commitHash);
+            var errorLogTask = GetWorkflowErrorLogAsync(owner, repo, runId);
+
+            await Task.WhenAll(gitDiffTask, errorLogTask);
+
+            var gitDiff = await gitDiffTask;
+            var errorLog = await errorLogTask;
+
+            _logger.LogInformation("Retrieved failure context: diff size {DiffSize}, error log size {ErrorSize}",
+                gitDiff.Length, errorLog.Length);
+
+            return (gitDiff, errorLog);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting failure context for {Owner}/{Repo} commit {CommitHash}",
+                owner, repo, commitHash);
+            return ("Error retrieving git diff", "Error retrieving error logs");
+        }
+    }
+
+    /// <summary>
+    /// Get git diff for a specific commit
+    /// </summary>
+    private async Task<string> GetGitDiffAsync(string owner, string repo, string commitHash)
+    {
+        try
+        {
+            // Get the commit details
+            var commit = await _githubClient.Repository.Commit.Get(owner, repo, commitHash);
+
+            if (commit?.Files == null || !commit.Files.Any())
+            {
+                return "No files changed in this commit.";
+            }
+
+            var diff = new StringBuilder();
+            diff.AppendLine($"Commit: {commit.Sha}");
+            diff.AppendLine($"Author: {commit.Commit.Author.Name} <{commit.Commit.Author.Email}>");
+            diff.AppendLine($"Date: {commit.Commit.Author.Date}");
+            diff.AppendLine($"Message: {commit.Commit.Message}");
+            diff.AppendLine();
+
+            // Include file changes (limited to prevent overwhelming the AI)
+            var filesToInclude = commit.Files.Take(10).ToList();
+
+            foreach (var file in filesToInclude)
+            {
+                diff.AppendLine($"File: {file.Filename}");
+                diff.AppendLine($"Status: {file.Status}");
+                diff.AppendLine($"Changes: +{file.Additions} -{file.Deletions}");
+
+                // Include patch for small files only
+                if (!string.IsNullOrEmpty(file.Patch) && file.Patch.Length < 2000)
+                {
+                    diff.AppendLine("Patch:");
+                    diff.AppendLine(file.Patch);
+                }
+
+                diff.AppendLine();
+            }
+
+            if (commit.Files.Count() > 10)
+            {
+                diff.AppendLine($"... and {commit.Files.Count() - 10} more files");
+            }
+
+            return diff.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving git diff for {Owner}/{Repo} commit {CommitHash}",
+                owner, repo, commitHash);
+            return $"Error retrieving git diff: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Get workflow run error logs
+    /// </summary>
+    private async Task<string> GetWorkflowErrorLogAsync(string owner, string repo, long runId)
+    {
+        try
+        {
+            // Get workflow run details
+            var workflowRun = await _githubClient.Actions.Workflows.Runs.Get(owner, repo, runId);
+
+            // Get jobs for this workflow run
+            var jobs = await _githubClient.Actions.Workflows.Jobs.List(owner, repo, runId);
+
+            var errorLog = new StringBuilder();
+            errorLog.AppendLine($"Workflow: {workflowRun.Name}");
+            errorLog.AppendLine($"Status: {workflowRun.Status}");
+            errorLog.AppendLine($"Conclusion: {workflowRun.Conclusion}");
+            errorLog.AppendLine($"Started: {workflowRun.CreatedAt}");
+            errorLog.AppendLine($"Duration: {workflowRun.UpdatedAt - workflowRun.CreatedAt}");
+            errorLog.AppendLine();
+
+            // Process failed jobs
+            var failedJobs = jobs.Jobs.Where(j => j.Conclusion.Value == JobConclusion.Failure).ToList();
+
+            foreach (var job in failedJobs)
+            {
+                errorLog.AppendLine($"Failed Job: {job.Name}");
+                errorLog.AppendLine($"Runner: {job.RunnerName}");
+                errorLog.AppendLine($"Started: {job.StartedAt}");
+                errorLog.AppendLine($"Completed: {job.CompletedAt}");
+
+                // Get job steps
+                foreach (var step in job.Steps.Where(s => s.Conclusion == StepConclusion.Failure))
+                {
+                    errorLog.AppendLine($"  Failed Step: {step.Name}");
+                    errorLog.AppendLine($"  Number: {step.Number}");
+                    errorLog.AppendLine($"  Started: {step.StartedAt}");
+                    errorLog.AppendLine($"  Completed: {step.CompletedAt}");
+                }
+
+                errorLog.AppendLine();
+
+                // Note: Getting actual step logs requires additional API calls and permissions
+                // For now, we'll include the job-level information
+                errorLog.AppendLine("Note: Detailed step logs require additional GitHub API permissions.");
+                errorLog.AppendLine("Check the workflow run URL for complete error details.");
+            }
+
+            if (!failedJobs.Any())
+            {
+                errorLog.AppendLine("No failed jobs found, but workflow was marked as failed.");
+                errorLog.AppendLine("This might indicate a workflow-level failure or cancellation.");
+            }
+
+            return errorLog.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving workflow error log for {Owner}/{Repo} run {RunId}",
+                owner, repo, runId);
+            return $"Error retrieving workflow logs: {ex.Message}";
+        }
+    }
+}

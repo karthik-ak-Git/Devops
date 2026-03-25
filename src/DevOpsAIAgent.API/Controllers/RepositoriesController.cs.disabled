@@ -1,0 +1,415 @@
+using Microsoft.AspNetCore.Mvc;
+using DevOpsAIAgent.Core.DTOs.Common;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.Core.Models;
+
+namespace DevOpsAIAgent.API.Controllers;
+
+/// <summary>
+/// Repository management endpoints
+/// </summary>
+[ApiController]
+[Route("api/repositories")]
+public class RepositoriesController : BaseApiController
+{
+    private readonly ITrackedRepositoryRepository _repositoryRepository;
+    private readonly IWebhookConfigurationService _webhookConfigService;
+    private readonly ICiCdEventRepository _eventRepository;
+    private readonly IIncidentRepository _incidentRepository;
+
+    public RepositoriesController(
+        ILogger<RepositoriesController> logger,
+        ITrackedRepositoryRepository repositoryRepository,
+        IWebhookConfigurationService webhookConfigService,
+        ICiCdEventRepository eventRepository,
+        IIncidentRepository incidentRepository)
+        : base(logger)
+    {
+        _repositoryRepository = repositoryRepository;
+        _webhookConfigService = webhookConfigService;
+        _eventRepository = eventRepository;
+        _incidentRepository = incidentRepository;
+    }
+
+    /// <summary>
+    /// Get all tracked repositories
+    /// </summary>
+    /// <param name="page">Page number (1-based)</param>
+    /// <param name="pageSize">Number of items per page</param>
+    /// <param name="isActive">Filter by active status</param>
+    /// <returns>Paginated tracked repositories</returns>
+    [HttpGet]
+    public async Task<IActionResult> GetRepositories(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] bool? isActive = null)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            Logger.LogInformation("Getting tracked repositories: page {Page}, size {PageSize}, active {IsActive}",
+                page, pageSize, isActive);
+
+            var repositories = await _repositoryRepository.GetPagedAsync(page, pageSize, isActive);
+            var totalCount = await _repositoryRepository.GetCountAsync(isActive);
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+            var result = new PagedResult<TrackedRepository>(
+                Items: repositories,
+                TotalCount: totalCount,
+                Page: page,
+                PageSize: pageSize,
+                TotalPages: totalPages
+            );
+
+            return SuccessResponse(result, "Tracked repositories retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving tracked repositories");
+            return ErrorResponse("Failed to retrieve tracked repositories");
+        }
+    }
+
+    /// <summary>
+    /// Get specific tracked repository by ID
+    /// </summary>
+    /// <param name="id">Repository ID</param>
+    /// <returns>Tracked repository details</returns>
+    [HttpGet("{id:long}")]
+    public async Task<IActionResult> GetRepository(long id)
+    {
+        try
+        {
+            Logger.LogInformation("Getting tracked repository: {Id}", id);
+
+            var repository = await _repositoryRepository.GetByIdAsync(id);
+            if (repository == null)
+            {
+                return NotFoundResponse($"Tracked repository with ID {id} not found");
+            }
+
+            return SuccessResponse(repository, "Tracked repository retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving tracked repository {Id}", id);
+            return ErrorResponse("Failed to retrieve tracked repository");
+        }
+    }
+
+    /// <summary>
+    /// Add a new repository for tracking
+    /// </summary>
+    /// <param name="request">Add repository request</param>
+    /// <returns>Created tracked repository</returns>
+    [HttpPost]
+    public async Task<IActionResult> AddRepository([FromBody] AddRepositoryRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationErrorResponse(ModelState);
+            }
+
+            Logger.LogInformation("Adding repository for tracking: {Name}", request.Name);
+
+            // Check if repository is already being tracked
+            var existingRepo = await _repositoryRepository.GetByNameAsync(request.Name);
+            if (existingRepo != null)
+            {
+                return ConflictResponse($"Repository '{request.Name}' is already being tracked");
+            }
+
+            var repository = new TrackedRepository
+            {
+                Name = request.Name,
+                FullName = request.FullName,
+                Url = request.Url,
+                Description = request.Description,
+                Language = request.Language,
+                IsPrivate = request.IsPrivate,
+                IsActive = true,
+                AddedAt = DateTime.UtcNow
+            };
+
+            var createdRepository = await _repositoryRepository.CreateAsync(repository);
+
+            Logger.LogInformation("Added repository for tracking: {Id} - {Name}", createdRepository.Id, createdRepository.Name);
+
+            return CreatedResponse($"/api/repositories/{createdRepository.Id}", createdRepository,
+                "Repository added for tracking successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error adding repository for tracking");
+            return ErrorResponse("Failed to add repository for tracking");
+        }
+    }
+
+    /// <summary>
+    /// Update tracked repository settings
+    /// </summary>
+    /// <param name="id">Repository ID</param>
+    /// <param name="request">Update repository request</param>
+    /// <returns>Updated repository</returns>
+    [HttpPut("{id:long}")]
+    public async Task<IActionResult> UpdateRepository(long id, [FromBody] UpdateRepositoryRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationErrorResponse(ModelState);
+            }
+
+            Logger.LogInformation("Updating tracked repository: {Id}", id);
+
+            var existingRepository = await _repositoryRepository.GetByIdAsync(id);
+            if (existingRepository == null)
+            {
+                return NotFoundResponse($"Tracked repository with ID {id} not found");
+            }
+
+            // Update fields if provided
+            if (!string.IsNullOrEmpty(request.Description))
+            {
+                existingRepository.Description = request.Description;
+            }
+
+            if (!string.IsNullOrEmpty(request.Language))
+            {
+                existingRepository.Language = request.Language;
+            }
+
+            if (request.IsActive.HasValue)
+            {
+                existingRepository.IsActive = request.IsActive.Value;
+            }
+
+            var updatedRepository = await _repositoryRepository.UpdateAsync(existingRepository);
+
+            Logger.LogInformation("Updated tracked repository: {Id}", id);
+
+            return SuccessResponse(updatedRepository, "Tracked repository updated successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating tracked repository {Id}", id);
+            return ErrorResponse("Failed to update tracked repository");
+        }
+    }
+
+    /// <summary>
+    /// Remove repository from tracking
+    /// </summary>
+    /// <param name="id">Repository ID</param>
+    /// <returns>Deletion result</returns>
+    [HttpDelete("{id:long}")]
+    public async Task<IActionResult> RemoveRepository(long id)
+    {
+        try
+        {
+            Logger.LogWarning("Attempting to remove repository from tracking: {Id}", id);
+
+            var existingRepository = await _repositoryRepository.GetByIdAsync(id);
+            if (existingRepository == null)
+            {
+                return NotFoundResponse($"Tracked repository with ID {id} not found");
+            }
+
+            // Check for related data
+            var hasEvents = await _eventRepository.HasEventsForRepositoryAsync(existingRepository.Name);
+            var hasIncidents = await _incidentRepository.HasIncidentsForRepositoryAsync(existingRepository.Name);
+
+            if (hasEvents || hasIncidents)
+            {
+                return BadRequest("Cannot remove repository with existing events or incidents. Consider deactivating instead.");
+            }
+
+            // Remove webhook configuration if exists
+            var webhookConfig = await _webhookConfigService.GetWebhookConfigurationAsync(existingRepository.Name);
+            if (webhookConfig != null)
+            {
+                await _webhookConfigService.DeleteWebhookConfigurationAsync(webhookConfig.Id);
+                Logger.LogInformation("Removed webhook configuration for repository: {Name}", existingRepository.Name);
+            }
+
+            await _repositoryRepository.DeleteAsync(id);
+
+            Logger.LogInformation("Removed repository from tracking: {Id} - {Name}", id, existingRepository.Name);
+
+            return SuccessResponse(new { DeletedId = id }, "Repository removed from tracking successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error removing repository from tracking {Id}", id);
+            return ErrorResponse("Failed to remove repository from tracking");
+        }
+    }
+
+    /// <summary>
+    /// Get repository metrics and statistics
+    /// </summary>
+    /// <param name="id">Repository ID</param>
+    /// <param name="days">Number of days to analyze (default: 30)</param>
+    /// <returns>Repository metrics</returns>
+    [HttpGet("{id:long}/metrics")]
+    public async Task<IActionResult> GetRepositoryMetrics(long id, [FromQuery] int days = 30)
+    {
+        try
+        {
+            if (days < 1 || days > 365) days = 30;
+
+            Logger.LogInformation("Getting metrics for repository: {Id}", id);
+
+            var repository = await _repositoryRepository.GetByIdAsync(id);
+            if (repository == null)
+            {
+                return NotFoundResponse($"Tracked repository with ID {id} not found");
+            }
+
+            var fromDate = DateTime.UtcNow.AddDays(-days);
+
+            // Get CI/CD metrics
+            var totalEvents = await _eventRepository.GetEventCountByRepositoryAsync(repository.Name, fromDate);
+            var failedEvents = await _eventRepository.GetFailedEventCountByRepositoryAsync(repository.Name, fromDate);
+            var successRate = totalEvents > 0 ? Math.Round((double)(totalEvents - failedEvents) / totalEvents * 100, 2) : 0.0;
+
+            // Get incident metrics
+            var openIncidents = await _incidentRepository.GetOpenIncidentCountByRepositoryAsync(repository.Name);
+            var totalIncidents = await _incidentRepository.GetIncidentCountByRepositoryAsync(repository.Name, fromDate);
+
+            // Get recent activity
+            var recentEvents = await _eventRepository.GetRecentEventsByRepositoryAsync(repository.Name, 10);
+            var recentIncidents = await _incidentRepository.GetRecentIncidentsByRepositoryAsync(repository.Name, 5);
+
+            var metrics = new
+            {
+                Repository = repository,
+                Period = new { FromDate = fromDate, ToDate = DateTime.UtcNow, Days = days },
+                CiCdMetrics = new
+                {
+                    TotalEvents = totalEvents,
+                    FailedEvents = failedEvents,
+                    SuccessRate = successRate,
+                    RecentEvents = recentEvents
+                },
+                IncidentMetrics = new
+                {
+                    OpenIncidents = openIncidents,
+                    TotalIncidents = totalIncidents,
+                    RecentIncidents = recentIncidents
+                }
+            };
+
+            return SuccessResponse(metrics, "Repository metrics retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving metrics for repository {Id}", id);
+            return ErrorResponse("Failed to retrieve repository metrics");
+        }
+    }
+
+    /// <summary>
+    /// Toggle repository active status
+    /// </summary>
+    /// <param name="id">Repository ID</param>
+    /// <param name="isActive">Active status</param>
+    /// <returns>Updated repository</returns>
+    [HttpPatch("{id:long}/toggle-active")]
+    public async Task<IActionResult> ToggleRepositoryActive(long id, [FromQuery] bool isActive)
+    {
+        try
+        {
+            Logger.LogInformation("Toggling repository active status: {Id} to {IsActive}", id, isActive);
+
+            var repository = await _repositoryRepository.GetByIdAsync(id);
+            if (repository == null)
+            {
+                return NotFoundResponse($"Tracked repository with ID {id} not found");
+            }
+
+            repository.IsActive = isActive;
+            var updatedRepository = await _repositoryRepository.UpdateAsync(repository);
+
+            // Also toggle webhook configuration if exists
+            var webhookConfig = await _webhookConfigService.GetWebhookConfigurationAsync(repository.Name);
+            if (webhookConfig != null)
+            {
+                await _webhookConfigService.ToggleActiveStatusAsync(webhookConfig.Id, isActive);
+            }
+
+            Logger.LogInformation("Toggled repository active status: {Id}", id);
+
+            return SuccessResponse(updatedRepository,
+                $"Repository {(isActive ? "activated" : "deactivated")} successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error toggling repository active status {Id}", id);
+            return ErrorResponse("Failed to toggle repository active status");
+        }
+    }
+
+    /// <summary>
+    /// Get webhook configuration for repository
+    /// </summary>
+    /// <param name="id">Repository ID</param>
+    /// <returns>Webhook configuration</returns>
+    [HttpGet("{id:long}/webhook")]
+    public async Task<IActionResult> GetRepositoryWebhook(long id)
+    {
+        try
+        {
+            Logger.LogInformation("Getting webhook configuration for repository: {Id}", id);
+
+            var repository = await _repositoryRepository.GetByIdAsync(id);
+            if (repository == null)
+            {
+                return NotFoundResponse($"Tracked repository with ID {id} not found");
+            }
+
+            var webhookConfig = await _webhookConfigService.GetWebhookConfigurationAsync(repository.Name);
+            if (webhookConfig == null)
+            {
+                return NotFoundResponse("Webhook configuration not found for repository");
+            }
+
+            return SuccessResponse(webhookConfig, "Webhook configuration retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving webhook configuration for repository {Id}", id);
+            return ErrorResponse("Failed to retrieve webhook configuration");
+        }
+    }
+}
+
+/// <summary>
+/// Request model for adding a repository
+/// </summary>
+public class AddRepositoryRequest
+{
+    public required string Name { get; set; }
+    public required string FullName { get; set; }
+    public required string Url { get; set; }
+    public string? Description { get; set; }
+    public string? Language { get; set; }
+    public bool IsPrivate { get; set; } = false;
+}
+
+/// <summary>
+/// Request model for updating a repository
+/// </summary>
+public class UpdateRepositoryRequest
+{
+    public string? Description { get; set; }
+    public string? Language { get; set; }
+    public bool? IsActive { get; set; }
+}

@@ -1,0 +1,460 @@
+using Microsoft.AspNetCore.Mvc;
+using DevOpsAIAgent.Core.DTOs;
+using DevOpsAIAgent.Core.DTOs.Common;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.Core.Models;
+using DevOpsAIAgent.Core.Models.Enums;
+
+namespace DevOpsAIAgent.API.Controllers;
+
+/// <summary>
+/// Incident management endpoints
+/// </summary>
+[ApiController]
+[Route("api/incidents")]
+public class IncidentsController : BaseApiController
+{
+    private readonly IIncidentRepository _incidentRepository;
+    private readonly ICiCdEventRepository _eventRepository;
+    private readonly IDashboardNotificationService _notificationService;
+
+    public IncidentsController(
+        ILogger<IncidentsController> logger,
+        IIncidentRepository incidentRepository,
+        ICiCdEventRepository eventRepository,
+        IDashboardNotificationService notificationService)
+        : base(logger)
+    {
+        _incidentRepository = incidentRepository;
+        _eventRepository = eventRepository;
+        _notificationService = notificationService;
+    }
+
+    /// <summary>
+    /// Get paginated list of incidents
+    /// </summary>
+    /// <param name="page">Page number (1-based)</param>
+    /// <param name="pageSize">Number of items per page</param>
+    /// <param name="status">Filter by status</param>
+    /// <param name="severity">Filter by severity</param>
+    /// <param name="repositoryName">Filter by repository</param>
+    /// <param name="assignedTo">Filter by assignee</param>
+    /// <returns>Paginated incidents</returns>
+    [HttpGet]
+    public async Task<IActionResult> GetIncidents(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null,
+        [FromQuery] string? severity = null,
+        [FromQuery] string? repositoryName = null,
+        [FromQuery] string? assignedTo = null)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            Logger.LogInformation("Getting incidents: page {Page}, size {PageSize}, status {Status}, severity {Severity}",
+                page, pageSize, status, severity);
+
+            // Parse enum values
+            IncidentStatus? statusFilter = null;
+            if (!string.IsNullOrEmpty(status) && Enum.TryParse<IncidentStatus>(status, true, out var parsedStatus))
+            {
+                statusFilter = parsedStatus;
+            }
+
+            IncidentSeverity? severityFilter = null;
+            if (!string.IsNullOrEmpty(severity) && Enum.TryParse<IncidentSeverity>(severity, true, out var parsedSeverity))
+            {
+                severityFilter = parsedSeverity;
+            }
+
+            var incidents = await _incidentRepository.GetPagedAsync(
+                page, pageSize, statusFilter, severityFilter, repositoryName, assignedTo);
+
+            var totalCount = await _incidentRepository.GetCountAsync(
+                statusFilter, severityFilter, repositoryName, assignedTo);
+
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+            var result = new PagedResult<Incident>(
+                Items: incidents,
+                TotalCount: totalCount,
+                Page: page,
+                PageSize: pageSize,
+                TotalPages: totalPages
+            );
+
+            return SuccessResponse(result, "Incidents retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving incidents");
+            return ErrorResponse("Failed to retrieve incidents");
+        }
+    }
+
+    /// <summary>
+    /// Get specific incident by ID
+    /// </summary>
+    /// <param name="id">Incident ID</param>
+    /// <returns>Incident details</returns>
+    [HttpGet("{id:long}")]
+    public async Task<IActionResult> GetIncident(long id)
+    {
+        try
+        {
+            Logger.LogInformation("Getting incident: {Id}", id);
+
+            var incident = await _incidentRepository.GetByIdAsync(id);
+            if (incident == null)
+            {
+                return NotFoundResponse($"Incident with ID {id} not found");
+            }
+
+            // Include related CI/CD event if available
+            if (incident.RelatedCiCdEventId.HasValue)
+            {
+                var relatedEvent = await _eventRepository.GetByIdAsync(incident.RelatedCiCdEventId.Value);
+                incident.RelatedCiCdEvent = relatedEvent;
+            }
+
+            return SuccessResponse(incident, "Incident retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving incident {Id}", id);
+            return ErrorResponse("Failed to retrieve incident");
+        }
+    }
+
+    /// <summary>
+    /// Create a new incident
+    /// </summary>
+    /// <param name="request">Create incident request</param>
+    /// <returns>Created incident</returns>
+    [HttpPost]
+    public async Task<IActionResult> CreateIncident([FromBody] CreateIncidentRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationErrorResponse(ModelState);
+            }
+
+            Logger.LogInformation("Creating incident: {Title}", request.Title);
+
+            // Parse severity
+            if (!Enum.TryParse<IncidentSeverity>(request.Severity, true, out var severity))
+            {
+                return BadRequest($"Invalid severity value: {request.Severity}");
+            }
+
+            // Validate related CI/CD event if specified
+            if (request.RelatedCiCdEventId.HasValue)
+            {
+                var relatedEvent = await _eventRepository.GetByIdAsync(request.RelatedCiCdEventId.Value);
+                if (relatedEvent == null)
+                {
+                    return BadRequest($"Related CI/CD event with ID {request.RelatedCiCdEventId} not found");
+                }
+            }
+
+            var incident = new Incident
+            {
+                Title = request.Title,
+                Description = request.Description,
+                Severity = severity,
+                Status = IncidentStatus.Open,
+                RepositoryName = request.RepositoryName,
+                AssignedTo = request.AssignedTo,
+                RelatedCiCdEventId = request.RelatedCiCdEventId,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            var createdIncident = await _incidentRepository.CreateAsync(incident);
+
+            Logger.LogInformation("Created incident: {Id} - {Title}", createdIncident.Id, createdIncident.Title);
+
+            // Send real-time notification
+            var activityItem = new ActivityFeedItem(
+                Type: "incident_created",
+                Title: $"New {severity.ToString().ToLower()} incident created",
+                Description: request.Title,
+                RepositoryName: request.RepositoryName,
+                Url: null,
+                Timestamp: DateTime.UtcNow
+            );
+
+            await _notificationService.SendActivityFeedUpdateAsync(activityItem);
+
+            return CreatedResponse($"/api/incidents/{createdIncident.Id}", createdIncident, "Incident created successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error creating incident");
+            return ErrorResponse("Failed to create incident");
+        }
+    }
+
+    /// <summary>
+    /// Update an existing incident
+    /// </summary>
+    /// <param name="id">Incident ID</param>
+    /// <param name="request">Update incident request</param>
+    /// <returns>Updated incident</returns>
+    [HttpPut("{id:long}")]
+    public async Task<IActionResult> UpdateIncident(long id, [FromBody] UpdateIncidentRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationErrorResponse(ModelState);
+            }
+
+            Logger.LogInformation("Updating incident: {Id}", id);
+
+            var existingIncident = await _incidentRepository.GetByIdAsync(id);
+            if (existingIncident == null)
+            {
+                return NotFoundResponse($"Incident with ID {id} not found");
+            }
+
+            // Update fields if provided
+            if (!string.IsNullOrEmpty(request.Title))
+            {
+                existingIncident.Title = request.Title;
+            }
+
+            if (!string.IsNullOrEmpty(request.Description))
+            {
+                existingIncident.Description = request.Description;
+            }
+
+            if (!string.IsNullOrEmpty(request.Severity) &&
+                Enum.TryParse<IncidentSeverity>(request.Severity, true, out var severity))
+            {
+                existingIncident.Severity = severity;
+            }
+
+            if (!string.IsNullOrEmpty(request.Status) &&
+                Enum.TryParse<IncidentStatus>(request.Status, true, out var status))
+            {
+                existingIncident.Status = status;
+
+                // Set resolved timestamp if status is being changed to resolved
+                if (status == IncidentStatus.Resolved && existingIncident.ResolvedAt == null)
+                {
+                    existingIncident.ResolvedAt = DateTime.UtcNow;
+                }
+                // Clear resolved timestamp if status is changed from resolved
+                else if (status != IncidentStatus.Resolved && existingIncident.ResolvedAt != null)
+                {
+                    existingIncident.ResolvedAt = null;
+                }
+            }
+
+            if (request.AssignedTo != null)
+            {
+                existingIncident.AssignedTo = string.IsNullOrEmpty(request.AssignedTo) ? null : request.AssignedTo;
+            }
+
+            existingIncident.UpdatedAt = DateTime.UtcNow;
+
+            var updatedIncident = await _incidentRepository.UpdateAsync(existingIncident);
+
+            Logger.LogInformation("Updated incident: {Id}", id);
+
+            // Send real-time notification
+            var activityItem = new ActivityFeedItem(
+                Type: "incident_updated",
+                Title: $"Incident updated: {updatedIncident.Title}",
+                Description: $"Status: {updatedIncident.Status}, Severity: {updatedIncident.Severity}",
+                RepositoryName: updatedIncident.RepositoryName,
+                Url: null,
+                Timestamp: DateTime.UtcNow
+            );
+
+            await _notificationService.SendActivityFeedUpdateAsync(activityItem);
+
+            return SuccessResponse(updatedIncident, "Incident updated successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating incident {Id}", id);
+            return ErrorResponse("Failed to update incident");
+        }
+    }
+
+    /// <summary>
+    /// Delete an incident
+    /// </summary>
+    /// <param name="id">Incident ID</param>
+    /// <returns>Deletion result</returns>
+    [HttpDelete("{id:long}")]
+    public async Task<IActionResult> DeleteIncident(long id)
+    {
+        try
+        {
+            Logger.LogWarning("Attempting to delete incident: {Id}", id);
+
+            var existingIncident = await _incidentRepository.GetByIdAsync(id);
+            if (existingIncident == null)
+            {
+                return NotFoundResponse($"Incident with ID {id} not found");
+            }
+
+            await _incidentRepository.DeleteAsync(id);
+
+            Logger.LogInformation("Deleted incident: {Id}", id);
+
+            return SuccessResponse(new { DeletedId = id }, "Incident deleted successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting incident {Id}", id);
+            return ErrorResponse("Failed to delete incident");
+        }
+    }
+
+    /// <summary>
+    /// Get incidents statistics
+    /// </summary>
+    /// <param name="days">Number of days to analyze (default: 30)</param>
+    /// <param name="repositoryName">Filter by repository</param>
+    /// <returns>Incident statistics</returns>
+    [HttpGet("statistics")]
+    public async Task<IActionResult> GetIncidentStatistics(
+        [FromQuery] int days = 30,
+        [FromQuery] string? repositoryName = null)
+    {
+        try
+        {
+            if (days < 1 || days > 365) days = 30;
+
+            Logger.LogInformation("Getting incident statistics for {Days} days, repo {Repository}", days, repositoryName);
+
+            var fromDate = DateTime.UtcNow.AddDays(-days);
+
+            var totalIncidents = await _incidentRepository.GetCountInPeriodAsync(fromDate, DateTime.UtcNow, repositoryName);
+            var openIncidents = await _incidentRepository.GetCountAsync(IncidentStatus.Open, null, repositoryName, null);
+            var resolvedIncidents = await _incidentRepository.GetCountAsync(IncidentStatus.Resolved, null, repositoryName, null);
+            var inProgressIncidents = await _incidentRepository.GetCountAsync(IncidentStatus.InProgress, null, repositoryName, null);
+
+            // Get breakdown by severity
+            var criticalIncidents = await _incidentRepository.GetCountAsync(null, IncidentSeverity.Critical, repositoryName, null);
+            var highIncidents = await _incidentRepository.GetCountAsync(null, IncidentSeverity.High, repositoryName, null);
+            var mediumIncidents = await _incidentRepository.GetCountAsync(null, IncidentSeverity.Medium, repositoryName, null);
+            var lowIncidents = await _incidentRepository.GetCountAsync(null, IncidentSeverity.Low, repositoryName, null);
+
+            // Calculate resolution metrics
+            var resolvedInPeriod = await _incidentRepository.GetResolvedIncidentsInPeriodAsync(fromDate, DateTime.UtcNow, repositoryName);
+            var avgResolutionTime = resolvedInPeriod.Any()
+                ? resolvedInPeriod.Where(i => i.ResolvedAt.HasValue).Average(i => (i.ResolvedAt!.Value - i.CreatedAt).TotalHours)
+                : 0.0;
+
+            var statistics = new
+            {
+                Period = new { FromDate = fromDate, ToDate = DateTime.UtcNow, Days = days },
+                RepositoryFilter = repositoryName,
+                Summary = new
+                {
+                    TotalIncidents = totalIncidents,
+                    OpenIncidents = openIncidents,
+                    ResolvedIncidents = resolvedIncidents,
+                    InProgressIncidents = inProgressIncidents,
+                    AverageResolutionTimeHours = Math.Round(avgResolutionTime, 2)
+                },
+                SeverityBreakdown = new
+                {
+                    Critical = criticalIncidents,
+                    High = highIncidents,
+                    Medium = mediumIncidents,
+                    Low = lowIncidents
+                }
+            };
+
+            return SuccessResponse(statistics, "Incident statistics retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving incident statistics");
+            return ErrorResponse("Failed to retrieve incident statistics");
+        }
+    }
+
+    /// <summary>
+    /// Bulk update incident assignments
+    /// </summary>
+    /// <param name="incidentIds">List of incident IDs</param>
+    /// <param name="assignedTo">User to assign incidents to</param>
+    /// <returns>Update result</returns>
+    [HttpPatch("bulk-assign")]
+    public async Task<IActionResult> BulkAssignIncidents(
+        [FromBody] BulkAssignIncidentsRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationErrorResponse(ModelState);
+            }
+
+            Logger.LogInformation("Bulk assigning {Count} incidents to {User}",
+                request.IncidentIds.Count, request.AssignedTo);
+
+            var updatedCount = 0;
+            var notFoundIds = new List<long>();
+
+            foreach (var incidentId in request.IncidentIds)
+            {
+                var incident = await _incidentRepository.GetByIdAsync(incidentId);
+                if (incident == null)
+                {
+                    notFoundIds.Add(incidentId);
+                    continue;
+                }
+
+                incident.AssignedTo = request.AssignedTo;
+                incident.UpdatedAt = DateTime.UtcNow;
+
+                await _incidentRepository.UpdateAsync(incident);
+                updatedCount++;
+            }
+
+            var result = new
+            {
+                UpdatedCount = updatedCount,
+                NotFoundIds = notFoundIds,
+                AssignedTo = request.AssignedTo
+            };
+
+            var message = $"Bulk assignment completed: {updatedCount} incidents assigned";
+            if (notFoundIds.Any())
+            {
+                message += $", {notFoundIds.Count} incidents not found";
+            }
+
+            return SuccessResponse(result, message);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error in bulk incident assignment");
+            return ErrorResponse("Failed to bulk assign incidents");
+        }
+    }
+}
+
+/// <summary>
+/// Request model for bulk incident assignment
+/// </summary>
+public class BulkAssignIncidentsRequest
+{
+    public required List<long> IncidentIds { get; set; }
+    public required string AssignedTo { get; set; }
+}

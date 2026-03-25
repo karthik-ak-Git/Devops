@@ -1,0 +1,284 @@
+using System.Text;
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Models;
+using Mscc.GenerativeAI;
+using Microsoft.Extensions.Options;
+using DevOpsAIAgent.Core.Models.Configuration;
+using Pgvector;
+
+namespace DevOpsAIAgent.API.Services;
+
+/// <summary>
+/// Service for generating vector embeddings for AI analysis
+/// </summary>
+public class EmbeddingService : IEmbeddingService
+{
+    private readonly ILogger<EmbeddingService> _logger;
+    private readonly LlmConfiguration _llmConfig;
+    private readonly GoogleAI _geminiClient;
+    private readonly IAiAnalysisRepository _analysisRepository;
+
+    public EmbeddingService(
+        ILogger<EmbeddingService> logger,
+        IOptions<LlmConfiguration> llmConfig,
+        IAiAnalysisRepository analysisRepository)
+    {
+        _logger = logger;
+        _llmConfig = llmConfig.Value;
+        _analysisRepository = analysisRepository;
+
+        var apiKey = _llmConfig.Gemini?.ApiKey ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            throw new InvalidOperationException("Gemini API key is not configured for embedding service");
+        }
+
+        _geminiClient = new GoogleAI(apiKey);
+    }
+
+    /// <summary>
+    /// Generate embedding vector for text content
+    /// </summary>
+    /// <param name="text">Text content to embed</param>
+    /// <returns>Embedding vector as pgvector Vector</returns>
+    public async Task<Vector?> GenerateEmbeddingAsync(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                _logger.LogWarning("Empty or null text provided for embedding generation");
+                return null;
+            }
+
+            _logger.LogDebug("Generating embedding for text (length: {TextLength})", text.Length);
+
+            // Clean and truncate text if necessary
+            var cleanText = CleanTextForEmbedding(text);
+
+            // Use Gemini's embedding model
+            var embeddingModel = _geminiClient.EmbeddingModel(
+                model: "models/text-embedding-004"); // Latest Gemini embedding model
+
+            var embedding = await embeddingModel.EmbedContentAsync(cleanText);
+
+            if (embedding?.Values == null || !embedding.Values.Any())
+            {
+                _logger.LogWarning("No embedding values returned from Gemini API");
+                return null;
+            }
+
+            var embeddingArray = embedding.Values.ToArray();
+            _logger.LogDebug("Generated embedding with {Dimensions} dimensions", embeddingArray.Length);
+
+            return new Vector(embeddingArray);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating embedding for text");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Find similar AI analyses based on embedding similarity
+    /// </summary>
+    /// <param name="embedding">Query embedding vector</param>
+    /// <param name="count">Number of similar analyses to return</param>
+    /// <returns>List of similar AI analyses</returns>
+    public async Task<IReadOnlyList<AiAnalysis>> FindSimilarAnalysesAsync(Vector embedding, int count = 5)
+    {
+        try
+        {
+            _logger.LogDebug("Finding {Count} similar analyses", count);
+
+            // Use the repository's FindSimilarAsync method
+            var similarAnalyses = await _analysisRepository.FindSimilarAsync(embedding, count);
+
+            _logger.LogDebug("Found {Count} similar analyses", similarAnalyses.Count);
+
+            return similarAnalyses;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error finding similar analyses");
+            return Array.Empty<AiAnalysis>();
+        }
+    }
+
+    /// <summary>
+    /// Generate embeddings for multiple text documents
+    /// </summary>
+    /// <param name="texts">Collection of text documents</param>
+    /// <returns>Dictionary mapping text to embedding vector</returns>
+    public async Task<Dictionary<string, float[]>> GenerateEmbeddingsAsync(IEnumerable<string> texts)
+    {
+        try
+        {
+            var textList = texts.ToList();
+            _logger.LogInformation("Generating embeddings for {Count} documents", textList.Count);
+
+            var results = new Dictionary<string, float[]>();
+
+            // Process in batches to avoid API limits
+            const int batchSize = 10;
+            for (int i = 0; i < textList.Count; i += batchSize)
+            {
+                var batch = textList.Skip(i).Take(batchSize);
+                var batchTasks = batch.Select(async text =>
+                {
+                    var embedding = await GenerateEmbeddingAsync(text);
+                    return new { Text = text, Embedding = embedding };
+                });
+
+                var batchResults = await Task.WhenAll(batchTasks);
+
+                foreach (var result in batchResults)
+                {
+                    if (result.Embedding.Length > 0)
+                    {
+                        results[result.Text] = result.Embedding;
+                    }
+                }
+
+                // Add delay between batches to respect rate limits
+                if (i + batchSize < textList.Count)
+                {
+                    await Task.Delay(1000); // 1 second delay between batches
+                }
+            }
+
+            _logger.LogInformation("Generated {Count} embeddings successfully", results.Count);
+            return results;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating batch embeddings");
+            return new Dictionary<string, float[]>();
+        }
+    }
+
+    /// <summary>
+    /// Calculate cosine similarity between two pgvector Vector objects
+    /// </summary>
+    /// <param name="vector1">First vector</param>
+    /// <param name="vector2">Second vector</param>
+    /// <returns>Cosine similarity score between 0 and 1</returns>
+    private static float CalculateCosineSimilarity(Vector vector1, Vector vector2)
+    {
+        try
+        {
+            var array1 = vector1.ToArray();
+            var array2 = vector2.ToArray();
+
+            if (array1.Length != array2.Length)
+            {
+                return 0f;
+            }
+
+            var dotProduct = 0f;
+            var magnitude1 = 0f;
+            var magnitude2 = 0f;
+
+            for (int i = 0; i < array1.Length; i++)
+            {
+                dotProduct += array1[i] * array2[i];
+                magnitude1 += array1[i] * array1[i];
+                magnitude2 += array2[i] * array2[i];
+            }
+
+            magnitude1 = (float)Math.Sqrt(magnitude1);
+            magnitude2 = (float)Math.Sqrt(magnitude2);
+
+            if (magnitude1 == 0f || magnitude2 == 0f)
+            {
+                return 0f;
+            }
+
+            var similarity = dotProduct / (magnitude1 * magnitude2);
+
+            // Clamp to [0, 1] range
+            return Math.Max(0f, Math.Min(1f, similarity));
+        }
+        catch (Exception)
+        {
+            return 0f;
+        }
+    }
+
+    /// <summary>
+    /// Find most similar documents to a query embedding
+    /// </summary>
+    /// <param name="queryEmbedding">Query embedding vector</param>
+    /// <param name="documentEmbeddings">Dictionary of document embeddings</param>
+    /// <param name="topK">Number of top similar documents to return</param>
+    /// <returns>List of similar documents with similarity scores</returns>
+    public List<(string Document, float Similarity)> FindSimilarDocuments(
+        float[] queryEmbedding,
+        Dictionary<string, float[]> documentEmbeddings,
+        int topK = 5)
+    {
+        try
+        {
+            _logger.LogDebug("Finding {TopK} similar documents from {Total} candidates",
+                topK, documentEmbeddings.Count);
+
+            var similarities = documentEmbeddings
+                .Select(kvp => new
+                {
+                    Document = kvp.Key,
+                    Similarity = CalculateSimilarity(queryEmbedding, kvp.Value)
+                })
+                .Where(x => x.Similarity > 0)
+                .OrderByDescending(x => x.Similarity)
+                .Take(topK)
+                .Select(x => (x.Document, x.Similarity))
+                .ToList();
+
+            _logger.LogDebug("Found {Count} similar documents", similarities.Count);
+
+            return similarities;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error finding similar documents");
+            return new List<(string, float)>();
+        }
+    }
+
+    /// <summary>
+    /// Clean and prepare text for embedding generation
+    /// </summary>
+    private static string CleanTextForEmbedding(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var cleaned = new StringBuilder();
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+            if (!string.IsNullOrEmpty(trimmedLine))
+            {
+                // Remove excessive whitespace
+                var normalizedLine = System.Text.RegularExpressions.Regex
+                    .Replace(trimmedLine, @"\s+", " ");
+                cleaned.AppendLine(normalizedLine);
+            }
+        }
+
+        var result = cleaned.ToString().Trim();
+
+        // Truncate if too long (Gemini has token limits)
+        const int maxLength = 30000; // Conservative limit
+        if (result.Length > maxLength)
+        {
+            result = result[..maxLength] + "...";
+        }
+
+        return result;
+    }
+}

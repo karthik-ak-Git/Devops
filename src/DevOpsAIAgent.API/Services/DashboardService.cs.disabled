@@ -1,0 +1,284 @@
+using DevOpsAIAgent.Core.DTOs;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Models.Enums;
+
+namespace DevOpsAIAgent.API.Services;
+
+/// <summary>
+/// Service for aggregating dashboard data and analytics
+/// </summary>
+public class DashboardService
+{
+    private readonly ICiCdEventRepository _ciCdEventRepository;
+    private readonly IDeploymentRepository _deploymentRepository;
+    private readonly IIncidentRepository _incidentRepository;
+    private readonly IAiAnalysisRepository _aiAnalysisRepository;
+    private readonly ITrackedRepositoryRepository _repositoryRepository;
+    private readonly ILogger<DashboardService> _logger;
+
+    public DashboardService(
+        ICiCdEventRepository ciCdEventRepository,
+        IDeploymentRepository deploymentRepository,
+        IIncidentRepository incidentRepository,
+        IAiAnalysisRepository aiAnalysisRepository,
+        ITrackedRepositoryRepository repositoryRepository,
+        ILogger<DashboardService> logger)
+    {
+        _ciCdEventRepository = ciCdEventRepository;
+        _deploymentRepository = deploymentRepository;
+        _incidentRepository = incidentRepository;
+        _aiAnalysisRepository = aiAnalysisRepository;
+        _repositoryRepository = repositoryRepository;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Get comprehensive dashboard summary
+    /// </summary>
+    /// <returns>Dashboard summary with key metrics</returns>
+    public async Task<DashboardSummary> GetDashboardSummaryAsync()
+    {
+        try
+        {
+            _logger.LogInformation("Generating dashboard summary");
+
+            var cutoffDate = DateTime.UtcNow.AddDays(-30); // Last 30 days
+
+            // Get all metrics in parallel
+            var tasksDict = new Dictionary<string, Task>
+            {
+                ["totalPipelines"] = GetTotalPipelinesAsync(cutoffDate),
+                ["failedPipelines"] = GetFailedPipelinesAsync(cutoffDate),
+                ["activeDeployments"] = GetActiveDeploymentsAsync(),
+                ["deploymentSuccessRate"] = GetDeploymentSuccessRateAsync(cutoffDate),
+                ["openIncidents"] = GetOpenIncidentsAsync(),
+                ["criticalIncidents"] = GetCriticalIncidentsAsync(),
+                ["aiAnalyses"] = GetAiAnalysesCountAsync(cutoffDate),
+                ["lastEvent"] = GetLastEventTimeAsync()
+            };
+
+            await Task.WhenAll(tasksDict.Values);
+
+            var totalPipelines = await (Task<int>)tasksDict["totalPipelines"];
+            var failedPipelines = await (Task<int>)tasksDict["failedPipelines"];
+            var activeDeployments = await (Task<int>)tasksDict["activeDeployments"];
+            var deploymentSuccessRate = await (Task<double>)tasksDict["deploymentSuccessRate"];
+            var openIncidents = await (Task<int>)tasksDict["openIncidents"];
+            var criticalIncidents = await (Task<int>)tasksDict["criticalIncidents"];
+            var aiAnalyses = await (Task<int>)tasksDict["aiAnalyses"];
+            var lastEvent = await (Task<DateTime?>)tasksDict["lastEvent"];
+
+            var summary = new DashboardSummary(
+                TotalPipelines: totalPipelines,
+                FailedPipelines: failedPipelines,
+                ActiveDeployments: activeDeployments,
+                DeploymentSuccessRate: deploymentSuccessRate,
+                OpenIncidents: openIncidents,
+                CriticalIncidents: criticalIncidents,
+                AiAnalysesPerformed: aiAnalyses,
+                LastEventAt: lastEvent
+            );
+
+            _logger.LogInformation("Dashboard summary generated: {Summary}",
+                $"Pipelines: {totalPipelines}, Failed: {failedPipelines}, Incidents: {openIncidents}");
+
+            return summary;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating dashboard summary");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Get recent activity feed items
+    /// </summary>
+    /// <param name="limit">Maximum number of items to return</param>
+    /// <returns>List of recent activity items</returns>
+    public async Task<List<ActivityFeedItem>> GetActivityFeedAsync(int limit = 50)
+    {
+        try
+        {
+            _logger.LogDebug("Getting activity feed (limit: {Limit})", limit);
+
+            var activities = new List<ActivityFeedItem>();
+            var cutoffDate = DateTime.UtcNow.AddDays(-7); // Last 7 days
+
+            // Get recent CI/CD events
+            var recentEvents = await _ciCdEventRepository.GetRecentEventsAsync(limit / 2, cutoffDate);
+            foreach (var evt in recentEvents)
+            {
+                activities.Add(new ActivityFeedItem(
+                    Type: evt.IsFailure ? "pipeline_failure" : "pipeline_success",
+                    Title: $"{evt.WorkflowName} {(evt.IsFailure ? "failed" : "succeeded")}",
+                    Description: $"Commit {evt.CommitHash[..8]} by {evt.TriggerActor}",
+                    RepositoryName: evt.RepositoryName,
+                    Url: evt.RunUrl,
+                    Timestamp: evt.ReceivedAt
+                ));
+            }
+
+            // Get recent incidents
+            var recentIncidents = await _incidentRepository.GetRecentIncidentsAsync(limit / 4, cutoffDate);
+            foreach (var incident in recentIncidents)
+            {
+                activities.Add(new ActivityFeedItem(
+                    Type: "incident_created",
+                    Title: $"New {incident.Severity.ToString().ToLower()} incident",
+                    Description: incident.Title,
+                    RepositoryName: incident.RepositoryName,
+                    Url: null,
+                    Timestamp: incident.CreatedAt
+                ));
+            }
+
+            // Get recent deployments
+            var recentDeployments = await _deploymentRepository.GetRecentDeploymentsAsync(limit / 4, cutoffDate);
+            foreach (var deployment in recentDeployments)
+            {
+                activities.Add(new ActivityFeedItem(
+                    Type: "deployment",
+                    Title: $"Deployment to {deployment.Environment}",
+                    Description: $"Version {deployment.Version} deployed by {deployment.DeployedBy}",
+                    RepositoryName: deployment.RepositoryName,
+                    Url: null,
+                    Timestamp: deployment.DeployedAt
+                ));
+            }
+
+            // Sort by timestamp and limit
+            var sortedActivities = activities
+                .OrderByDescending(a => a.Timestamp)
+                .Take(limit)
+                .ToList();
+
+            _logger.LogDebug("Generated activity feed with {Count} items", sortedActivities.Count);
+
+            return sortedActivities;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating activity feed");
+            return new List<ActivityFeedItem>();
+        }
+    }
+
+    /// <summary>
+    /// Get pipeline failure trends over time
+    /// </summary>
+    /// <param name="days">Number of days to analyze</param>
+    /// <returns>Daily failure counts</returns>
+    public async Task<Dictionary<DateTime, int>> GetFailureTrendsAsync(int days = 30)
+    {
+        try
+        {
+            _logger.LogDebug("Getting failure trends for {Days} days", days);
+
+            var startDate = DateTime.UtcNow.Date.AddDays(-days);
+            var events = await _ciCdEventRepository.GetEventsByDateRangeAsync(startDate, DateTime.UtcNow);
+
+            var failureTrends = events
+                .Where(e => e.IsFailure)
+                .GroupBy(e => e.ReceivedAt.Date)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            // Fill in missing dates with zero
+            for (var date = startDate; date <= DateTime.UtcNow.Date; date = date.AddDays(1))
+            {
+                failureTrends.TryAdd(date, 0);
+            }
+
+            return failureTrends.OrderBy(kvp => kvp.Key).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting failure trends");
+            return new Dictionary<DateTime, int>();
+        }
+    }
+
+    /// <summary>
+    /// Get repository-specific metrics
+    /// </summary>
+    /// <param name="repositoryName">Repository name</param>
+    /// <returns>Repository metrics</returns>
+    public async Task<object> GetRepositoryMetricsAsync(string repositoryName)
+    {
+        try
+        {
+            _logger.LogDebug("Getting metrics for repository: {Repository}", repositoryName);
+
+            var cutoffDate = DateTime.UtcNow.AddDays(-30);
+
+            var totalEvents = await _ciCdEventRepository.GetEventCountByRepositoryAsync(repositoryName, cutoffDate);
+            var failedEvents = await _ciCdEventRepository.GetFailedEventCountByRepositoryAsync(repositoryName, cutoffDate);
+            var openIncidents = await _incidentRepository.GetOpenIncidentCountByRepositoryAsync(repositoryName);
+            var deployments = await _deploymentRepository.GetDeploymentCountByRepositoryAsync(repositoryName, cutoffDate);
+
+            var successRate = totalEvents > 0 ? Math.Round((double)(totalEvents - failedEvents) / totalEvents * 100, 2) : 0;
+
+            return new
+            {
+                RepositoryName = repositoryName,
+                TotalEvents = totalEvents,
+                FailedEvents = failedEvents,
+                SuccessRate = successRate,
+                OpenIncidents = openIncidents,
+                Deployments = deployments,
+                Period = "Last 30 days"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting repository metrics for {Repository}", repositoryName);
+            throw;
+        }
+    }
+
+    // Private helper methods for getting individual metrics
+
+    private async Task<int> GetTotalPipelinesAsync(DateTime since)
+    {
+        return await _ciCdEventRepository.GetEventCountAsync(since);
+    }
+
+    private async Task<int> GetFailedPipelinesAsync(DateTime since)
+    {
+        return await _ciCdEventRepository.GetFailedEventCountAsync(since);
+    }
+
+    private async Task<int> GetActiveDeploymentsAsync()
+    {
+        return await _deploymentRepository.GetActiveDeploymentCountAsync();
+    }
+
+    private async Task<double> GetDeploymentSuccessRateAsync(DateTime since)
+    {
+        var totalDeployments = await _deploymentRepository.GetDeploymentCountAsync(since);
+        if (totalDeployments == 0) return 100.0;
+
+        var successfulDeployments = await _deploymentRepository.GetSuccessfulDeploymentCountAsync(since);
+        return Math.Round((double)successfulDeployments / totalDeployments * 100, 2);
+    }
+
+    private async Task<int> GetOpenIncidentsAsync()
+    {
+        return await _incidentRepository.GetOpenIncidentCountAsync();
+    }
+
+    private async Task<int> GetCriticalIncidentsAsync()
+    {
+        return await _incidentRepository.GetIncidentCountBySeverityAsync(IncidentSeverity.Critical);
+    }
+
+    private async Task<int> GetAiAnalysesCountAsync(DateTime since)
+    {
+        return await _aiAnalysisRepository.GetAnalysisCountAsync(since);
+    }
+
+    private async Task<DateTime?> GetLastEventTimeAsync()
+    {
+        return await _ciCdEventRepository.GetLastEventTimeAsync();
+    }
+}

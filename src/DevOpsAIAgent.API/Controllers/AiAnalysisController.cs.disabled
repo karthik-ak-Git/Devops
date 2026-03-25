@@ -1,0 +1,430 @@
+using Microsoft.AspNetCore.Mvc;
+using DevOpsAIAgent.Core.DTOs.Common;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.Core.Models;
+
+namespace DevOpsAIAgent.API.Controllers;
+
+/// <summary>
+/// AI analysis management endpoints
+/// </summary>
+[ApiController]
+[Route("api/ai-analysis")]
+public class AiAnalysisController : BaseApiController
+{
+    private readonly IAiAnalysisRepository _analysisRepository;
+    private readonly ICiCdEventRepository _eventRepository;
+    private readonly IAIAssistantService _aiService;
+    private readonly IGitHubAnalysisService _githubService;
+    private readonly IEmbeddingService _embeddingService;
+
+    public AiAnalysisController(
+        ILogger<AiAnalysisController> logger,
+        IAiAnalysisRepository analysisRepository,
+        ICiCdEventRepository eventRepository,
+        IAIAssistantService aiService,
+        IGitHubAnalysisService githubService,
+        IEmbeddingService embeddingService)
+        : base(logger)
+    {
+        _analysisRepository = analysisRepository;
+        _eventRepository = eventRepository;
+        _aiService = aiService;
+        _githubService = githubService;
+        _embeddingService = embeddingService;
+    }
+
+    /// <summary>
+    /// Get paginated list of AI analyses
+    /// </summary>
+    /// <param name="page">Page number (1-based)</param>
+    /// <param name="pageSize">Number of items per page</param>
+    /// <param name="repositoryName">Filter by repository name</param>
+    /// <param name="fromDate">Filter analyses from this date</param>
+    /// <returns>Paginated AI analyses</returns>
+    [HttpGet]
+    public async Task<IActionResult> GetAiAnalyses(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? repositoryName = null,
+        [FromQuery] DateTime? fromDate = null)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            Logger.LogInformation("Getting AI analyses: page {Page}, size {PageSize}, repo {Repository}",
+                page, pageSize, repositoryName);
+
+            var analyses = await _analysisRepository.GetPagedAsync(page, pageSize, repositoryName, fromDate);
+            var totalCount = await _analysisRepository.GetCountAsync(repositoryName, fromDate);
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+            var result = new PagedResult<AiAnalysis>(
+                Items: analyses,
+                TotalCount: totalCount,
+                Page: page,
+                PageSize: pageSize,
+                TotalPages: totalPages
+            );
+
+            return SuccessResponse(result, "AI analyses retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving AI analyses");
+            return ErrorResponse("Failed to retrieve AI analyses");
+        }
+    }
+
+    /// <summary>
+    /// Get specific AI analysis by ID
+    /// </summary>
+    /// <param name="id">Analysis ID</param>
+    /// <returns>AI analysis details</returns>
+    [HttpGet("{id:long}")]
+    public async Task<IActionResult> GetAiAnalysis(long id)
+    {
+        try
+        {
+            Logger.LogInformation("Getting AI analysis: {Id}", id);
+
+            var analysis = await _analysisRepository.GetByIdAsync(id);
+            if (analysis == null)
+            {
+                return NotFoundResponse($"AI analysis with ID {id} not found");
+            }
+
+            // Include related CI/CD event
+            if (analysis.CiCdEventId.HasValue)
+            {
+                var cicdEvent = await _eventRepository.GetByIdAsync(analysis.CiCdEventId.Value);
+                analysis.CiCdEvent = cicdEvent;
+            }
+
+            return SuccessResponse(analysis, "AI analysis retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving AI analysis {Id}", id);
+            return ErrorResponse("Failed to retrieve AI analysis");
+        }
+    }
+
+    /// <summary>
+    /// Trigger AI analysis for a specific CI/CD event
+    /// </summary>
+    /// <param name="request">Analysis request</param>
+    /// <returns>Analysis result</returns>
+    [HttpPost("analyze")]
+    public async Task<IActionResult> AnalyzeCiCdEvent([FromBody] AnalyzeEventRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationErrorResponse(ModelState);
+            }
+
+            Logger.LogInformation("Triggering AI analysis for CI/CD event: {EventId}", request.CiCdEventId);
+
+            // Get the CI/CD event
+            var cicdEvent = await _eventRepository.GetByIdAsync(request.CiCdEventId);
+            if (cicdEvent == null)
+            {
+                return NotFoundResponse($"CI/CD event with ID {request.CiCdEventId} not found");
+            }
+
+            // Check if analysis already exists for this event
+            var existingAnalysis = await _analysisRepository.GetByCiCdEventIdAsync(request.CiCdEventId);
+            if (existingAnalysis != null && !request.ForceReAnalysis)
+            {
+                return ConflictResponse("Analysis already exists for this CI/CD event. Use forceReAnalysis=true to regenerate.");
+            }
+
+            // Extract repository information
+            var repoFullName = cicdEvent.RepositoryName;
+            var repoParts = repoFullName.Split('/');
+            if (repoParts.Length != 2)
+            {
+                return BadRequest("Invalid repository name format in CI/CD event");
+            }
+
+            var owner = repoParts[0];
+            var repo = repoParts[1];
+
+            // Get failure context from GitHub
+            var (gitDiff, errorLog) = await _githubService.GetFailureContextAsync(
+                owner, repo, cicdEvent.CommitHash, cicdEvent.WorkflowRunId ?? 0);
+
+            // Prepare context for AI analysis
+            var context = $"""
+                Repository: {cicdEvent.RepositoryName}
+                Workflow: {cicdEvent.WorkflowName}
+                Branch: {cicdEvent.BranchName}
+                Commit: {cicdEvent.CommitHash}
+                Status: {cicdEvent.Status}
+                Conclusion: {cicdEvent.Conclusion}
+                Run URL: {cicdEvent.RunUrl}
+                Triggered by: {cicdEvent.TriggerActor}
+                Received at: {cicdEvent.ReceivedAt}
+
+                Git Diff:
+                {gitDiff}
+
+                Error Log:
+                {errorLog}
+                """;
+
+            // Generate AI analysis
+            var aiSuggestion = await _aiService.AnalyzeFailureAsync(context);
+
+            // Generate embedding for the context
+            var embedding = await _embeddingService.GenerateEmbeddingAsync(context);
+
+            // Create or update analysis record
+            AiAnalysis analysis;
+            if (existingAnalysis != null)
+            {
+                // Update existing analysis
+                existingAnalysis.Analysis = aiSuggestion;
+                existingAnalysis.Context = context;
+                existingAnalysis.Embedding = embedding;
+                existingAnalysis.CreatedAt = DateTime.UtcNow;
+
+                analysis = await _analysisRepository.UpdateAsync(existingAnalysis);
+                Logger.LogInformation("Updated AI analysis: {Id}", analysis.Id);
+            }
+            else
+            {
+                // Create new analysis
+                analysis = new AiAnalysis
+                {
+                    CiCdEventId = request.CiCdEventId,
+                    Analysis = aiSuggestion,
+                    Context = context,
+                    Embedding = embedding,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                analysis = await _analysisRepository.CreateAsync(analysis);
+                Logger.LogInformation("Created AI analysis: {Id}", analysis.Id);
+            }
+
+            return SuccessResponse(analysis, "AI analysis completed successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during AI analysis for CI/CD event {EventId}", request.CiCdEventId);
+            return ErrorResponse("Failed to complete AI analysis");
+        }
+    }
+
+    /// <summary>
+    /// Get AI analysis statistics
+    /// </summary>
+    /// <param name="days">Number of days to analyze (default: 30)</param>
+    /// <param name="repositoryName">Filter by repository name</param>
+    /// <returns>AI analysis statistics</returns>
+    [HttpGet("statistics")]
+    public async Task<IActionResult> GetAnalysisStatistics(
+        [FromQuery] int days = 30,
+        [FromQuery] string? repositoryName = null)
+    {
+        try
+        {
+            if (days < 1 || days > 365) days = 30;
+
+            Logger.LogInformation("Getting AI analysis statistics for {Days} days, repo {Repository}", days, repositoryName);
+
+            var fromDate = DateTime.UtcNow.AddDays(-days);
+
+            var totalAnalyses = await _analysisRepository.GetCountAsync(repositoryName, fromDate);
+            var dailyAnalyses = await _analysisRepository.GetDailyAnalysisCountsAsync(fromDate, DateTime.UtcNow, repositoryName);
+
+            // Get repository breakdown (if no specific repository filter)
+            Dictionary<string, int>? repositoryBreakdown = null;
+            if (string.IsNullOrEmpty(repositoryName))
+            {
+                repositoryBreakdown = await _analysisRepository.GetAnalysisCountsByRepositoryAsync(fromDate, DateTime.UtcNow);
+            }
+
+            var statistics = new
+            {
+                Period = new { FromDate = fromDate, ToDate = DateTime.UtcNow, Days = days },
+                RepositoryFilter = repositoryName,
+                Summary = new
+                {
+                    TotalAnalyses = totalAnalyses,
+                    AveragePerDay = totalAnalyses > 0 ? Math.Round((double)totalAnalyses / days, 2) : 0.0
+                },
+                DailyBreakdown = dailyAnalyses,
+                RepositoryBreakdown = repositoryBreakdown
+            };
+
+            return SuccessResponse(statistics, "AI analysis statistics retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving AI analysis statistics");
+            return ErrorResponse("Failed to retrieve AI analysis statistics");
+        }
+    }
+
+    /// <summary>
+    /// Find similar analyses to a given analysis
+    /// </summary>
+    /// <param name="id">Analysis ID to find similar analyses for</param>
+    /// <param name="limit">Maximum number of similar analyses to return</param>
+    /// <returns>Similar analyses</returns>
+    [HttpGet("{id:long}/similar")]
+    public async Task<IActionResult> FindSimilarAnalyses(long id, [FromQuery] int limit = 5)
+    {
+        try
+        {
+            if (limit < 1 || limit > 20) limit = 5;
+
+            Logger.LogInformation("Finding similar analyses for analysis: {Id}", id);
+
+            var analysis = await _analysisRepository.GetByIdAsync(id);
+            if (analysis == null)
+            {
+                return NotFoundResponse($"AI analysis with ID {id} not found");
+            }
+
+            if (analysis.Embedding == null)
+            {
+                return BadRequest("Analysis does not have an embedding for similarity search");
+            }
+
+            var similarAnalyses = await _embeddingService.FindSimilarAnalysesAsync(analysis.Embedding, limit);
+
+            return SuccessResponse(similarAnalyses, "Similar analyses retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error finding similar analyses for analysis {Id}", id);
+            return ErrorResponse("Failed to find similar analyses");
+        }
+    }
+
+    /// <summary>
+    /// Bulk regenerate embeddings for existing analyses
+    /// </summary>
+    /// <param name="batchSize">Number of analyses to process in each batch</param>
+    /// <returns>Regeneration result</returns>
+    [HttpPost("regenerate-embeddings")]
+    public async Task<IActionResult> RegenerateEmbeddings([FromQuery] int batchSize = 10)
+    {
+        try
+        {
+            if (batchSize < 1 || batchSize > 50) batchSize = 10;
+
+            Logger.LogInformation("Starting bulk embedding regeneration with batch size: {BatchSize}", batchSize);
+
+            var analysesWithoutEmbeddings = await _analysisRepository.GetAnalysesWithoutEmbeddingsAsync(batchSize * 5);
+
+            if (!analysesWithoutEmbeddings.Any())
+            {
+                return SuccessResponse(new { ProcessedCount = 0 }, "No analyses found without embeddings");
+            }
+
+            var processedCount = 0;
+            var errorCount = 0;
+
+            // Process in batches to avoid overwhelming the embedding service
+            for (int i = 0; i < analysesWithoutEmbeddings.Count; i += batchSize)
+            {
+                var batch = analysesWithoutEmbeddings.Skip(i).Take(batchSize).ToList();
+
+                foreach (var analysis in batch)
+                {
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(analysis.Context))
+                        {
+                            var embedding = await _embeddingService.GenerateEmbeddingAsync(analysis.Context);
+                            if (embedding != null)
+                            {
+                                analysis.Embedding = embedding;
+                                await _analysisRepository.UpdateAsync(analysis);
+                                processedCount++;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Error generating embedding for analysis {Id}", analysis.Id);
+                        errorCount++;
+                    }
+                }
+
+                // Add delay between batches
+                if (i + batchSize < analysesWithoutEmbeddings.Count)
+                {
+                    await Task.Delay(2000); // 2 second delay between batches
+                }
+            }
+
+            var result = new
+            {
+                ProcessedCount = processedCount,
+                ErrorCount = errorCount,
+                TotalAnalyses = analysesWithoutEmbeddings.Count,
+                BatchSize = batchSize
+            };
+
+            Logger.LogInformation("Completed embedding regeneration: {Processed} processed, {Errors} errors",
+                processedCount, errorCount);
+
+            return SuccessResponse(result, "Embedding regeneration completed");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during bulk embedding regeneration");
+            return ErrorResponse("Failed to regenerate embeddings");
+        }
+    }
+
+    /// <summary>
+    /// Delete AI analysis
+    /// </summary>
+    /// <param name="id">Analysis ID</param>
+    /// <returns>Deletion result</returns>
+    [HttpDelete("{id:long}")]
+    public async Task<IActionResult> DeleteAnalysis(long id)
+    {
+        try
+        {
+            Logger.LogWarning("Attempting to delete AI analysis: {Id}", id);
+
+            var existingAnalysis = await _analysisRepository.GetByIdAsync(id);
+            if (existingAnalysis == null)
+            {
+                return NotFoundResponse($"AI analysis with ID {id} not found");
+            }
+
+            await _analysisRepository.DeleteAsync(id);
+
+            Logger.LogInformation("Deleted AI analysis: {Id}", id);
+
+            return SuccessResponse(new { DeletedId = id }, "AI analysis deleted successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting AI analysis {Id}", id);
+            return ErrorResponse("Failed to delete AI analysis");
+        }
+    }
+}
+
+/// <summary>
+/// Request model for triggering AI analysis
+/// </summary>
+public class AnalyzeEventRequest
+{
+    public required long CiCdEventId { get; set; }
+    public bool ForceReAnalysis { get; set; } = false;
+}

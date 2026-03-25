@@ -1,0 +1,293 @@
+using Microsoft.AspNetCore.Mvc;
+using DevOpsAIAgent.Core.DTOs.Common;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Models;
+
+namespace DevOpsAIAgent.API.Controllers;
+
+/// <summary>
+/// CI/CD events management endpoints
+/// </summary>
+[ApiController]
+[Route("api/cicd-events")]
+public class CiCdEventsController : BaseApiController
+{
+    private readonly ICiCdEventRepository _eventRepository;
+    private readonly IAiAnalysisRepository _analysisRepository;
+
+    public CiCdEventsController(
+        ILogger<CiCdEventsController> logger,
+        ICiCdEventRepository eventRepository,
+        IAiAnalysisRepository analysisRepository)
+        : base(logger)
+    {
+        _eventRepository = eventRepository;
+        _analysisRepository = analysisRepository;
+    }
+
+    /// <summary>
+    /// Get paginated list of CI/CD events
+    /// </summary>
+    /// <param name="page">Page number (1-based)</param>
+    /// <param name="pageSize">Number of items per page</param>
+    /// <param name="repositoryName">Filter by repository name</param>
+    /// <param name="status">Filter by status</param>
+    /// <param name="conclusion">Filter by conclusion</param>
+    /// <param name="fromDate">Filter events from this date</param>
+    /// <param name="toDate">Filter events to this date</param>
+    /// <returns>Paginated CI/CD events</returns>
+    [HttpGet]
+    public async Task<IActionResult> GetCiCdEvents(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? repositoryName = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? conclusion = null,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            Logger.LogInformation("Getting CI/CD events: page {Page}, size {PageSize}, repo {Repository}",
+                page, pageSize, repositoryName);
+
+            var events = await _eventRepository.GetPagedAsync(
+                page, pageSize, repositoryName, status, conclusion, fromDate, toDate);
+
+            var totalCount = await _eventRepository.GetCountAsync(
+                repositoryName, status, conclusion, fromDate, toDate);
+
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+            var result = new PagedResult<CiCdEvent>(
+                Items: events,
+                TotalCount: totalCount,
+                Page: page,
+                PageSize: pageSize,
+                TotalPages: totalPages
+            );
+
+            return SuccessResponse(result, "CI/CD events retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving CI/CD events");
+            return ErrorResponse("Failed to retrieve CI/CD events");
+        }
+    }
+
+    /// <summary>
+    /// Get specific CI/CD event by ID
+    /// </summary>
+    /// <param name="id">Event ID</param>
+    /// <returns>CI/CD event details</returns>
+    [HttpGet("{id:long}")]
+    public async Task<IActionResult> GetCiCdEvent(long id)
+    {
+        try
+        {
+            Logger.LogInformation("Getting CI/CD event: {Id}", id);
+
+            var cicdEvent = await _eventRepository.GetByIdAsync(id);
+            if (cicdEvent == null)
+            {
+                return NotFoundResponse($"CI/CD event with ID {id} not found");
+            }
+
+            // Include AI analysis if available
+            var analysis = await _analysisRepository.GetByCiCdEventIdAsync(id);
+            if (analysis != null)
+            {
+                cicdEvent.AiAnalysis = analysis;
+            }
+
+            return SuccessResponse(cicdEvent, "CI/CD event retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving CI/CD event {Id}", id);
+            return ErrorResponse("Failed to retrieve CI/CD event");
+        }
+    }
+
+    /// <summary>
+    /// Get CI/CD events statistics
+    /// </summary>
+    /// <param name="days">Number of days to analyze (default: 30)</param>
+    /// <param name="repositoryName">Filter by repository name</param>
+    /// <returns>CI/CD events statistics</returns>
+    [HttpGet("statistics")]
+    public async Task<IActionResult> GetCiCdEventsStatistics(
+        [FromQuery] int days = 30,
+        [FromQuery] string? repositoryName = null)
+    {
+        try
+        {
+            if (days < 1 || days > 365) days = 30;
+
+            Logger.LogInformation("Getting CI/CD statistics for {Days} days, repo {Repository}", days, repositoryName);
+
+            var fromDate = DateTime.UtcNow.AddDays(-days);
+            var toDate = DateTime.UtcNow;
+
+            var totalEvents = await _eventRepository.GetCountAsync(repositoryName, null, null, fromDate, toDate);
+            var failedEvents = await _eventRepository.GetCountAsync(repositoryName, null, "failure", fromDate, toDate);
+            var succeededEvents = await _eventRepository.GetCountAsync(repositoryName, null, "success", fromDate, toDate);
+            var cancelledEvents = await _eventRepository.GetCountAsync(repositoryName, null, "cancelled", fromDate, toDate);
+
+            // Get daily breakdown
+            var dailyBreakdown = await _eventRepository.GetDailyEventCountsAsync(fromDate, toDate, repositoryName);
+
+            // Get repository breakdown (if no specific repository filter)
+            Dictionary<string, int>? repositoryBreakdown = null;
+            if (string.IsNullOrEmpty(repositoryName))
+            {
+                repositoryBreakdown = await _eventRepository.GetEventCountsByRepositoryAsync(fromDate, toDate);
+            }
+
+            // Calculate success rate
+            var successRate = totalEvents > 0 ? Math.Round((double)succeededEvents / totalEvents * 100, 2) : 0.0;
+            var failureRate = totalEvents > 0 ? Math.Round((double)failedEvents / totalEvents * 100, 2) : 0.0;
+
+            var statistics = new
+            {
+                Period = new { FromDate = fromDate, ToDate = toDate, Days = days },
+                RepositoryFilter = repositoryName,
+                Summary = new
+                {
+                    TotalEvents = totalEvents,
+                    SucceededEvents = succeededEvents,
+                    FailedEvents = failedEvents,
+                    CancelledEvents = cancelledEvents,
+                    SuccessRate = successRate,
+                    FailureRate = failureRate
+                },
+                DailyBreakdown = dailyBreakdown,
+                RepositoryBreakdown = repositoryBreakdown
+            };
+
+            return SuccessResponse(statistics, "CI/CD statistics retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving CI/CD statistics");
+            return ErrorResponse("Failed to retrieve CI/CD statistics");
+        }
+    }
+
+    /// <summary>
+    /// Get recent failed CI/CD events
+    /// </summary>
+    /// <param name="limit">Maximum number of events to return</param>
+    /// <param name="repositoryName">Filter by repository name</param>
+    /// <returns>Recent failed events</returns>
+    [HttpGet("failures")]
+    public async Task<IActionResult> GetRecentFailures(
+        [FromQuery] int limit = 10,
+        [FromQuery] string? repositoryName = null)
+    {
+        try
+        {
+            if (limit < 1 || limit > 50) limit = 10;
+
+            Logger.LogInformation("Getting recent failures: limit {Limit}, repo {Repository}", limit, repositoryName);
+
+            var recentFailures = await _eventRepository.GetRecentFailuresAsync(limit, repositoryName);
+
+            // Include AI analysis for each failure
+            foreach (var failure in recentFailures)
+            {
+                var analysis = await _analysisRepository.GetByCiCdEventIdAsync(failure.Id);
+                if (analysis != null)
+                {
+                    failure.AiAnalysis = analysis;
+                }
+            }
+
+            return SuccessResponse(recentFailures, "Recent failures retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving recent failures");
+            return ErrorResponse("Failed to retrieve recent failures");
+        }
+    }
+
+    /// <summary>
+    /// Get CI/CD events by workflow name
+    /// </summary>
+    /// <param name="workflowName">Workflow name to filter by</param>
+    /// <param name="page">Page number</param>
+    /// <param name="pageSize">Items per page</param>
+    /// <param name="repositoryName">Optional repository filter</param>
+    /// <returns>CI/CD events for the specified workflow</returns>
+    [HttpGet("workflows/{workflowName}")]
+    public async Task<IActionResult> GetEventsByWorkflow(
+        string workflowName,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? repositoryName = null)
+    {
+        try
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            Logger.LogInformation("Getting events for workflow {Workflow}, page {Page}, repo {Repository}",
+                workflowName, page, repositoryName);
+
+            var events = await _eventRepository.GetByWorkflowNameAsync(workflowName, page, pageSize, repositoryName);
+            var totalCount = await _eventRepository.GetCountByWorkflowNameAsync(workflowName, repositoryName);
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+            var result = new PagedResult<CiCdEvent>(
+                Items: events,
+                TotalCount: totalCount,
+                Page: page,
+                PageSize: pageSize,
+                TotalPages: totalPages
+            );
+
+            return SuccessResponse(result, $"Events for workflow '{workflowName}' retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving events for workflow {Workflow}", workflowName);
+            return ErrorResponse("Failed to retrieve workflow events");
+        }
+    }
+
+    /// <summary>
+    /// Delete CI/CD event (admin operation)
+    /// </summary>
+    /// <param name="id">Event ID to delete</param>
+    /// <returns>Deletion result</returns>
+    [HttpDelete("{id:long}")]
+    public async Task<IActionResult> DeleteCiCdEvent(long id)
+    {
+        try
+        {
+            Logger.LogWarning("Attempting to delete CI/CD event: {Id}", id);
+
+            var existingEvent = await _eventRepository.GetByIdAsync(id);
+            if (existingEvent == null)
+            {
+                return NotFoundResponse($"CI/CD event with ID {id} not found");
+            }
+
+            await _eventRepository.DeleteAsync(id);
+
+            Logger.LogInformation("Deleted CI/CD event: {Id}", id);
+
+            return SuccessResponse(new { DeletedId = id }, "CI/CD event deleted successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting CI/CD event {Id}", id);
+            return ErrorResponse("Failed to delete CI/CD event");
+        }
+    }
+}

@@ -2,174 +2,222 @@
 
 [![Build Status](https://img.shields.io/badge/Build-Passing-success.svg)]()
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
+[![React 19](https://img.shields.io/badge/React-19+-blue.svg)](https://reactjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A comprehensive DevOps solution combining GitHub webhook integration, CI/CD pipeline monitoring, SSH management, and AI-powered failure analysis.
+A modern .NET API + React TypeScript application for DevOps analysis powered by multiple Large Language Models (LLMs), featuring GitHub webhook integration, CI/CD pipeline monitoring, and AI-powered code review and analysis.
 
-## 🎯 Project Overview
+## 🚀 Features
 
-This is a full-stack DevOps AI Agent system consisting of:
-- **Web API** - ASP.NET Core REST API with GitHub webhook support
-- **Desktop App** - WPF Windows application with real-time dashboard
-- **Core Services** - Shared business logic and infrastructure
-- **GitHub Integration** - Secure webhook handling with HMAC SHA256 verification
-- **AI Analysis** - Gemini AI integration for automated failure analysis
+- **Multiple LLM Providers**: Support for Google Gemini, OpenRouter, and Ollama with automatic fallback
+- **DevOps Analysis**: AI-powered insights for deployments, CI/CD pipelines, and infrastructure
+- **Code Review**: Automated code review with security, performance, and best practices analysis
+- **GitHub Integration**: Secure webhook handling with HMAC SHA256 verification
+- **Modern Tech Stack**: .NET 10, React 19, TypeScript, Tailwind CSS, Vite
+- **Health Monitoring**: Real-time health checks for all LLM providers
+- **Responsive UI**: Mobile-friendly interface with modern design
 
-![DevOps AI Agent Architecture](docs/architecture.png)
+## 🏗️ Architecture
 
-## 🚀 How to Run
+```
+src/
+├── DevOpsAIAgent.Core/          # Domain entities and interfaces
+├── DevOpsAIAgent.Data/          # Entity Framework and repositories
+├── DevOpsAIAgent.API/           # Web API backend (.NET 10)
+└── DevOpsAIAgent.Client/        # React TypeScript frontend
+```
+
+### Backend (.NET 10 API)
+- **Clean Architecture**: Separation of concerns with Core, Data, and API layers
+- **Multiple LLM Providers**: Gemini, OpenRouter, Ollama integrations with fallback
+- **Health Checks**: Built-in health monitoring for all services
+- **OpenAPI/Swagger**: Comprehensive API documentation
+- **Logging**: Structured logging with Serilog
+
+### Frontend (React 19 TypeScript)
+- **React 19**: Latest React with TypeScript
+- **Vite**: Fast build tool and dev server
+- **Tailwind CSS**: Utility-first CSS framework
+- **React Query**: Data fetching and caching
+- **React Router**: Client-side routing
+
+## 📊 Project Structure
+
+```
+DevOpsAIAgent/
+├── src/
+│   ├── DevOpsAIAgent.Core/           # Core domain models and interfaces
+│   ├── DevOpsAIAgent.Data/           # Data access layer (EF Core)
+│   ├── DevOpsAIAgent.API/            # Web API backend (.NET 10)
+│   │   ├── Controllers/              # API controllers
+│   │   │   ├── BaseApiController.cs
+│   │   │   └── GitHubController.cs
+│   │   ├── appsettings.json          # Configuration
+│   │   └── Program.cs                # API startup
+│   │
+│   ├── DevOpsAIAgent.Client/         # React TypeScript frontend
+│   │   ├── src/
+│   │   │   ├── components/           # React components
+│   │   │   ├── pages/                # Route pages
+│   │   │   ├── services/             # API services
+│   │   │   └── App.tsx               # Main app component
+│   │   ├── package.json              # Node.js dependencies
+│   │   └── vite.config.ts            # Vite configuration
+│   │
+│   └── DevOpsAIAgent.Web/            # Legacy MVC Web (being migrated)
+│
+├── docker/
+│   ├── Dockerfile.api               # API container configuration
+│   ├── Dockerfile.client            # Client container configuration
+│   ├── docker-compose.yml           # Multi-container orchestration
+│   ├── nginx.conf                   # Nginx configuration
+│   └── init.sql                     # Database initialization
+│
+├── DevOpsAIAgent.sln                # Visual Studio solution file
+└── README.md                        # This file
+```
+
+## 🚀 Setup Instructions
 
 ### Prerequisites
-
-- **Windows 10/11** (64-bit) or **Linux/macOS**
-- **[.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** or later
+- **.NET 10 SDK** or later
+- **Node.js 18+** and npm
+- **(Optional)** Ollama for local models
 - **Git** for cloning the repository
-- **GitHub Personal Access Token** (for webhook functionality)
-- **Gemini API Key** (for AI analysis features)
-- **WebView2 Runtime** (Windows only, usually pre-installed)
 
-### Step 1: Clone the Repository
-
+### 1. Clone and Navigate
 ```bash
 git clone https://github.com/karthik-ak-Git/Devops.git
 cd Devops
 ```
 
-### Step 2: Configure Environment Variables
+### 2. Backend Setup (.NET API)
 
-Create a `.env` file in the root directory:
-
-```env
-# GitHub Configuration
-GITHUB_PAT=ghp_your_github_personal_access_token_here
-GITHUB_WEBHOOK_SECRET=your_webhook_secret_here
-
-# AI Configuration (Gemini)
-GEMINI_API_KEY=your_gemini_api_key_here
-```
-
-**How to get these tokens:**
-
-#### GitHub Personal Access Token (PAT)
-1. Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
-2. Click "Generate new token"
-3. Select scopes: `repo`, `admin:repo_hook`
-4. Copy the token and paste into `.env`
-
-#### Webhook Secret
-Generate a secure secret:
-```powershell
-# PowerShell
-$secret = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((New-Guid).ToString() + (New-Guid).ToString()))
-Write-Host $secret
-```
-
-Add to `.env`: `GITHUB_WEBHOOK_SECRET=<generated_secret>`
-
-#### Gemini API Key
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Click "Get API Key"
-3. Create new API key
-4. Copy and paste into `.env`
-
-### Step 3: Run the Web API
-
+#### Install Dependencies
 ```bash
-# From the root directory
-cd src/DevOpsAIAgent.Web
-
-# Run the web server
-dotnet run
-
-# Server will start on: https://localhost:5001 or http://localhost:5000
+cd src/DevOpsAIAgent.API
+dotnet restore
 ```
 
-**Expected Output:**
-```
-✅ Loaded .env from: D:\Devops\.env
-info: Microsoft.Hosting.Lifetime[14]
-      Now listening on: https://localhost:5001
-info: Microsoft.Hosting.Lifetime[14]
-      Now listening on: http://localhost:5000
-```
+#### Configure LLM Providers
+Edit `appsettings.json` or use environment variables:
 
-### Step 4: Run the Desktop Application
-
-In a **new terminal**, run:
-
-```bash
-cd src/DevOpsAIAgent.App
-
-dotnet run
-```
-
-**Dashboard will:**
-- Connect to the Web API via SignalR
-- Display real-time pipeline failure alerts
-- Show AI-generated fix suggestions
-- Update in real-time as webhooks arrive
-
-### Step 5: Set Up GitHub Webhooks
-
-#### Option A: Using the API
-
-```bash
-# Get list of your repositories
-curl http://localhost:5000/api/webhooks/repositories
-
-# Create a webhook for a repository
-curl -X POST http://localhost:5000/api/webhooks/configure \
-  -H "Content-Type: application/json" \
-  -d '{"fullName": "owner/repository"}'
-```
-
-#### Option B: Manual Setup (GitHub UI)
-
-1. Go to Repository Settings → Webhooks
-2. Click "Add webhook"
-3. **Payload URL:** `https://yourdomain.com/api/webhooks/github`
-4. **Content Type:** `application/json`
-5. **Secret:** Paste your `GITHUB_WEBHOOK_SECRET` value
-6. **Events:** Select "Workflow runs"
-7. Click "Add webhook"
-
-### Step 6: Test the System
-
-#### Test 1: Health Check
-```bash
-curl http://localhost:5000/api/webhooks/github/health
-```
-
-Expected response:
 ```json
 {
-  "status": "healthy",
-  "service": "GitHub Webhook Receiver",
-  "timestamp": "2025-01-17T10:30:00Z"
+  "LlmProviders": {
+    "DefaultProvider": "Gemini",
+    "EnableFallback": true,
+    "Gemini": {
+      "ApiKey": "your-gemini-api-key",
+      "Enabled": true,
+      "Model": "gemini-1.5-pro"
+    },
+    "OpenRouter": {
+      "ApiKey": "your-openrouter-api-key",
+      "Enabled": false,
+      "Model": "anthropic/claude-3.5-sonnet"
+    },
+    "Ollama": {
+      "BaseUrl": "http://localhost:11434",
+      "Model": "llama3.1",
+      "Enabled": false
+    }
+  }
 }
 ```
 
-#### Test 2: Create a Webhook
-```bash
-curl -X POST http://localhost:5000/api/webhooks/configure \
-  -H "Content-Type: application/json" \
-  -d '{"fullName": "your-username/test-repo"}'
+#### Environment Variables (Alternative)
+Create a `.env` file in the API project root:
+```env
+# LLM Provider API Keys
+GEMINI_API_KEY=your_gemini_api_key_here
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+
+# GitHub Configuration (Optional)
+GITHUB_PAT=ghp_your_github_personal_access_token_here
+GITHUB_WEBHOOK_SECRET=your_webhook_secret_here
+
+# Database Configuration
+ConnectionStrings__DefaultConnection=Data Source=devops_ai_agent.db
 ```
 
-#### Test 3: Send Test Webhook
-
-See: `test-webhook.ps1` in the root directory for manual webhook testing.
+### 3. Frontend Setup (React Client)
 
 ```bash
-# Run the test script
-.\test-webhook.ps1
+cd src/DevOpsAIAgent.Client
+npm install
 ```
 
-### Step 7: Monitor Dashboard
+Create `.env` file:
+```env
+VITE_API_BASE_URL=http://localhost:5000/api
+VITE_ENV=development
+```
 
-1. Open the Desktop Application
-2. Watch for real-time alerts when workflows fail
-3. See AI-generated suggestions automatically
+## 🚀 Running the Application
+
+### Start Backend (API)
+```bash
+cd src/DevOpsAIAgent.API
+dotnet run
+```
+- API: http://localhost:5000
+- Swagger UI: http://localhost:5000/swagger
+
+### Start Frontend (React)
+```bash
+cd src/DevOpsAIAgent.Client
+npm run dev
+```
+- React app: http://localhost:5173
+
+## 🤖 LLM Provider Setup
+
+### Google Gemini
+1. Get API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Add to `appsettings.json` or set `GEMINI_API_KEY` environment variable
+3. Set `"Enabled": true` in configuration
+
+### OpenRouter
+1. Get API key from [OpenRouter](https://openrouter.ai/keys)
+2. Add to `appsettings.json` or set `OPENROUTER_API_KEY` environment variable
+3. Choose your preferred model (e.g., `anthropic/claude-3.5-sonnet`)
+4. Set `"Enabled": true` in configuration
+
+### Ollama (Local Models)
+1. Install [Ollama](https://ollama.ai/)
+2. Pull a model: `ollama pull llama3.1`
+3. Start Ollama service
+4. Set `"Enabled": true` in Ollama configuration
+
+## 📖 Usage
+
+### DevOps Analysis
+1. Navigate to `/analysis` in the web app
+2. Select your preferred LLM provider
+3. Enter your analysis prompt
+4. Provide context (logs, configurations, etc.)
+5. Click "Analyze" or "Analyze with Fallback"
+
+### Code Review
+1. Navigate to `/code-review` in the web app
+2. Select your LLM provider
+3. Paste code changes or new functions
+4. Click "Review Code" for AI analysis
+
+## 🔧 API Endpoints
+
+### LLM Analysis
+- `POST /api/analysis/devops` - Generate DevOps analysis
+- `POST /api/analysis/devops/fallback` - Generate analysis with fallback
+- `POST /api/analysis/code-review` - Generate code review
+- `GET /api/analysis/providers` - List available providers and status
+- `GET /api/analysis/health` - Health check for LLM providers
+
+### System
+- `GET /ping` - API health check
+- `GET /health` - Detailed health status
 
 ---
 
@@ -256,14 +304,27 @@ Devops/
 
 ## 🔗 API Endpoints
 
-### Webhooks
-- **POST** `/api/webhooks/github` - Receive GitHub webhooks
+### Health & Monitoring
+- **GET** `/health` - Application health check
+- **GET** `/ping` - Simple ping endpoint
+
+### GitHub Integration (v1 API)
+- **GET** `/api/v1/github/repository/{owner}/{repo}` - Get repository information
+- **POST** `/api/v1/github/webhook` - GitHub webhook handler
+- **GET** `/api/v1/github/repository/{owner}/{repo}/pull-requests` - List pull requests
+
+### Legacy Webhooks (v1)
+- **POST** `/api/webhooks/github` - Legacy GitHub webhook receiver
 - **GET** `/api/webhooks/repositories` - List user repositories
-- **POST** `/api/webhooks/configure` - Create webhook
-- **GET** `/api/webhooks/github/health` - Health check
+- **POST** `/api/webhooks/configure` - Create webhook configuration
+- **GET** `/api/webhooks/github/health` - Legacy health check
 
 ### SignalR Hubs
 - **Hub:** `/api/hubs/dashboard` - Real-time dashboard updates
+
+### API Documentation
+- **Swagger UI:** `http://localhost:5000/swagger` - Interactive API documentation
+- **OpenAPI Spec:** `http://localhost:5000/swagger/v1/swagger.json` - OpenAPI specification
 
 ---
 

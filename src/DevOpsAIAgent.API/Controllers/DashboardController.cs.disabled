@@ -1,0 +1,290 @@
+using Microsoft.AspNetCore.Mvc;
+using DevOpsAIAgent.Core.DTOs;
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.API.Services;
+
+namespace DevOpsAIAgent.API.Controllers;
+
+/// <summary>
+/// Dashboard data aggregation endpoints
+/// </summary>
+[ApiController]
+[Route("api/dashboard")]
+public class DashboardController : BaseApiController
+{
+    private readonly DashboardService _dashboardService;
+    private readonly IDashboardNotificationService _notificationService;
+
+    public DashboardController(
+        ILogger<DashboardController> logger,
+        DashboardService dashboardService,
+        IDashboardNotificationService notificationService)
+        : base(logger)
+    {
+        _dashboardService = dashboardService;
+        _notificationService = notificationService;
+    }
+
+    /// <summary>
+    /// Get comprehensive dashboard summary
+    /// </summary>
+    /// <returns>Dashboard summary with key metrics</returns>
+    [HttpGet("summary")]
+    public async Task<IActionResult> GetDashboardSummary()
+    {
+        try
+        {
+            Logger.LogInformation("Getting dashboard summary");
+
+            var summary = await _dashboardService.GetDashboardSummaryAsync();
+
+            // Send real-time update to connected clients
+            await _notificationService.SendDashboardUpdateAsync(summary);
+
+            return SuccessResponse(summary, "Dashboard summary retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving dashboard summary");
+            return ErrorResponse("Failed to retrieve dashboard summary");
+        }
+    }
+
+    /// <summary>
+    /// Get activity feed for dashboard
+    /// </summary>
+    /// <param name="limit">Maximum number of activities to return</param>
+    /// <returns>Recent activity feed items</returns>
+    [HttpGet("activity-feed")]
+    public async Task<IActionResult> GetActivityFeed([FromQuery] int limit = 50)
+    {
+        try
+        {
+            if (limit < 1 || limit > 100) limit = 50;
+
+            Logger.LogInformation("Getting activity feed (limit: {Limit})", limit);
+
+            var activities = await _dashboardService.GetActivityFeedAsync(limit);
+
+            return SuccessResponse(activities, "Activity feed retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving activity feed");
+            return ErrorResponse("Failed to retrieve activity feed");
+        }
+    }
+
+    /// <summary>
+    /// Get pipeline failure trends over time
+    /// </summary>
+    /// <param name="days">Number of days to analyze (default: 30)</param>
+    /// <returns>Daily failure trends</returns>
+    [HttpGet("failure-trends")]
+    public async Task<IActionResult> GetFailureTrends([FromQuery] int days = 30)
+    {
+        try
+        {
+            if (days < 1 || days > 365) days = 30;
+
+            Logger.LogInformation("Getting failure trends for {Days} days", days);
+
+            var trends = await _dashboardService.GetFailureTrendsAsync(days);
+
+            var result = new
+            {
+                Period = new { Days = days, FromDate = DateTime.UtcNow.AddDays(-days), ToDate = DateTime.UtcNow },
+                Trends = trends.Select(kvp => new
+                {
+                    Date = kvp.Key.ToString("yyyy-MM-dd"),
+                    FailureCount = kvp.Value
+                }).ToList()
+            };
+
+            return SuccessResponse(result, "Failure trends retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving failure trends");
+            return ErrorResponse("Failed to retrieve failure trends");
+        }
+    }
+
+    /// <summary>
+    /// Get metrics for a specific repository
+    /// </summary>
+    /// <param name="repositoryName">Repository name</param>
+    /// <returns>Repository-specific metrics</returns>
+    [HttpGet("repository/{repositoryName}/metrics")]
+    public async Task<IActionResult> GetRepositoryMetrics(string repositoryName)
+    {
+        try
+        {
+            Logger.LogInformation("Getting dashboard metrics for repository: {Repository}", repositoryName);
+
+            var metrics = await _dashboardService.GetRepositoryMetricsAsync(repositoryName);
+
+            return SuccessResponse(metrics, $"Repository metrics for '{repositoryName}' retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving repository metrics for {Repository}", repositoryName);
+            return ErrorResponse("Failed to retrieve repository metrics");
+        }
+    }
+
+    /// <summary>
+    /// Get real-time dashboard statistics
+    /// </summary>
+    /// <returns>Real-time statistics</returns>
+    [HttpGet("real-time")]
+    public async Task<IActionResult> GetRealTimeStatistics()
+    {
+        try
+        {
+            Logger.LogDebug("Getting real-time dashboard statistics");
+
+            var summary = await _dashboardService.GetDashboardSummaryAsync();
+            var recentActivities = await _dashboardService.GetActivityFeedAsync(10);
+
+            var realTimeData = new
+            {
+                Summary = summary,
+                RecentActivities = recentActivities,
+                LastUpdated = DateTime.UtcNow
+            };
+
+            return SuccessResponse(realTimeData, "Real-time statistics retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving real-time statistics");
+            return ErrorResponse("Failed to retrieve real-time statistics");
+        }
+    }
+
+    /// <summary>
+    /// Get dashboard overview with multiple metrics
+    /// </summary>
+    /// <param name="days">Number of days to analyze</param>
+    /// <returns>Comprehensive dashboard overview</returns>
+    [HttpGet("overview")]
+    public async Task<IActionResult> GetDashboardOverview([FromQuery] int days = 7)
+    {
+        try
+        {
+            if (days < 1 || days > 90) days = 7;
+
+            Logger.LogInformation("Getting dashboard overview for {Days} days", days);
+
+            var summaryTask = _dashboardService.GetDashboardSummaryAsync();
+            var activityTask = _dashboardService.GetActivityFeedAsync(20);
+            var trendsTask = _dashboardService.GetFailureTrendsAsync(days);
+
+            await Task.WhenAll(summaryTask, activityTask, trendsTask);
+
+            var summary = await summaryTask;
+            var activities = await activityTask;
+            var trends = await trendsTask;
+
+            var overview = new
+            {
+                Summary = summary,
+                Activities = activities.Take(10).ToList(),
+                FailureTrends = trends.Select(kvp => new
+                {
+                    Date = kvp.Key.ToString("yyyy-MM-dd"),
+                    Count = kvp.Value
+                }).ToList(),
+                Period = new
+                {
+                    Days = days,
+                    FromDate = DateTime.UtcNow.AddDays(-days),
+                    ToDate = DateTime.UtcNow
+                },
+                GeneratedAt = DateTime.UtcNow
+            };
+
+            return SuccessResponse(overview, "Dashboard overview retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error retrieving dashboard overview");
+            return ErrorResponse("Failed to retrieve dashboard overview");
+        }
+    }
+
+    /// <summary>
+    /// Refresh dashboard data and send updates to connected clients
+    /// </summary>
+    /// <returns>Refresh operation result</returns>
+    [HttpPost("refresh")]
+    public async Task<IActionResult> RefreshDashboard()
+    {
+        try
+        {
+            Logger.LogInformation("Manually refreshing dashboard data");
+
+            var summary = await _dashboardService.GetDashboardSummaryAsync();
+            var activities = await _dashboardService.GetActivityFeedAsync(5);
+
+            // Send updates to all connected clients
+            await _notificationService.SendDashboardUpdateAsync(summary);
+
+            foreach (var activity in activities.Take(3))
+            {
+                await _notificationService.SendActivityFeedUpdateAsync(activity);
+            }
+
+            var result = new
+            {
+                RefreshedAt = DateTime.UtcNow,
+                Summary = summary,
+                RecentActivities = activities.Count
+            };
+
+            return SuccessResponse(result, "Dashboard refreshed successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error refreshing dashboard");
+            return ErrorResponse("Failed to refresh dashboard");
+        }
+    }
+
+    /// <summary>
+    /// Get dashboard health status
+    /// </summary>
+    /// <returns>Health status information</returns>
+    [HttpGet("health")]
+    public async Task<IActionResult> GetDashboardHealth()
+    {
+        try
+        {
+            var summary = await _dashboardService.GetDashboardSummaryAsync();
+
+            var healthStatus = new
+            {
+                Status = "healthy",
+                Service = "dashboard",
+                Timestamp = DateTime.UtcNow,
+                Metrics = new
+                {
+                    TotalPipelines = summary.TotalPipelines,
+                    FailedPipelines = summary.FailedPipelines,
+                    OpenIncidents = summary.OpenIncidents,
+                    LastEventAt = summary.LastEventAt
+                },
+                Uptime = TimeSpan.FromMilliseconds(Environment.TickCount64),
+                Version = "1.0.0"
+            };
+
+            return SuccessResponse(healthStatus, "Dashboard health retrieved successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error checking dashboard health");
+            return ErrorResponse("Dashboard health check failed", 500);
+        }
+    }
+}

@@ -1,0 +1,343 @@
+using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
+using DevOpsAIAgent.Core.DTOs;
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Models;
+using DevOpsAIAgent.API.Hubs;
+
+namespace DevOpsAIAgent.API.Controllers;
+
+/// <summary>
+/// Webhook endpoints for processing external system notifications
+/// </summary>
+[ApiController]
+[Route("api/webhooks")]
+public class WebhooksController : BaseApiController
+{
+    private readonly IWebhookSecurityService _securityService;
+    private readonly IWebhookConfigurationService _configService;
+    private readonly IGitHubAnalysisService _githubService;
+    private readonly IAIAssistantService _aiService;
+    private readonly ICiCdEventRepository _eventRepository;
+    private readonly IAiAnalysisRepository _analysisRepository;
+    private readonly IDashboardNotificationService _notificationService;
+
+    public WebhooksController(
+        ILogger<WebhooksController> logger,
+        IWebhookSecurityService securityService,
+        IWebhookConfigurationService configService,
+        IGitHubAnalysisService githubService,
+        IAIAssistantService aiService,
+        ICiCdEventRepository eventRepository,
+        IAiAnalysisRepository analysisRepository,
+        IDashboardNotificationService notificationService)
+        : base(logger)
+    {
+        _securityService = securityService;
+        _configService = configService;
+        _githubService = githubService;
+        _aiService = aiService;
+        _eventRepository = eventRepository;
+        _analysisRepository = analysisRepository;
+        _notificationService = notificationService;
+    }
+
+    /// <summary>
+    /// Process GitHub webhook events
+    /// </summary>
+    /// <param name="payload">GitHub webhook payload</param>
+    /// <returns>Processing result</returns>
+    [HttpPost("github")]
+    public async Task<IActionResult> HandleGitHubWebhook([FromBody] JsonElement payload)
+    {
+        try
+        {
+            Logger.LogInformation("Received GitHub webhook");
+
+            // Get headers
+            var eventType = Request.Headers["X-GitHub-Event"].FirstOrDefault();
+            var signature = Request.Headers["X-Hub-Signature-256"].FirstOrDefault();
+            var deliveryId = Request.Headers["X-GitHub-Delivery"].FirstOrDefault();
+
+            if (string.IsNullOrEmpty(eventType))
+            {
+                Logger.LogWarning("Missing X-GitHub-Event header");
+                return BadRequest("Missing event type header");
+            }
+
+            // Read raw body for signature verification
+            Request.EnableBuffering();
+            Request.Body.Position = 0;
+            using var reader = new StreamReader(Request.Body);
+            var rawBody = await reader.ReadToEndAsync();
+
+            Logger.LogDebug("Processing GitHub {EventType} event, delivery: {DeliveryId}", eventType, deliveryId);
+
+            // Only process workflow_run events for CI/CD monitoring
+            if (eventType != "workflow_run")
+            {
+                Logger.LogDebug("Ignoring {EventType} event", eventType);
+                return Ok(new { Message = $"Event type {eventType} ignored", Processed = false });
+            }
+
+            // Parse webhook payload
+            var webhookPayload = JsonSerializer.Deserialize<GitHubWebhookPayload>(payload.GetRawText());
+            if (webhookPayload?.WorkflowRun == null || webhookPayload.Repository == null)
+            {
+                Logger.LogWarning("Invalid webhook payload structure");
+                return BadRequest("Invalid webhook payload");
+            }
+
+            // Get webhook configuration for this repository
+            var repoFullName = webhookPayload.Repository.FullName;
+            var webhookConfig = await _configService.GetWebhookConfigurationAsync(repoFullName);
+
+            if (webhookConfig == null)
+            {
+                Logger.LogWarning("No webhook configuration found for repository: {Repository}", repoFullName);
+                return BadRequest($"Webhook not configured for repository: {repoFullName}");
+            }
+
+            if (!webhookConfig.IsActive)
+            {
+                Logger.LogInformation("Webhook is disabled for repository: {Repository}", repoFullName);
+                return Ok(new { Message = "Webhook disabled for repository", Processed = false });
+            }
+
+            // Verify webhook signature
+            if (!string.IsNullOrEmpty(signature))
+            {
+                var isValidSignature = _securityService.VerifyWebhookSignature(rawBody, signature, webhookConfig.Secret);
+                if (!isValidSignature)
+                {
+                    Logger.LogWarning("Invalid webhook signature for repository: {Repository}", repoFullName);
+                    return Unauthorized("Invalid webhook signature");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("Missing webhook signature for repository: {Repository}", repoFullName);
+                return BadRequest("Missing webhook signature");
+            }
+
+            // Process the workflow run event
+            await ProcessWorkflowRunEvent(webhookPayload);
+
+            Logger.LogInformation("GitHub webhook processed successfully for {Repository}", repoFullName);
+
+            return Ok(new {
+                Message = "Webhook processed successfully",
+                Processed = true,
+                EventType = eventType,
+                Repository = repoFullName,
+                WorkflowRun = webhookPayload.WorkflowRun.Id
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error processing GitHub webhook");
+            return StatusCode(500, "Internal server error processing webhook");
+        }
+    }
+
+    /// <summary>
+    /// Health check endpoint for webhooks
+    /// </summary>
+    /// <returns>Health status</returns>
+    [HttpGet("health")]
+    public IActionResult GetWebhookHealth()
+    {
+        try
+        {
+            return Ok(new
+            {
+                Status = "healthy",
+                Service = "webhooks",
+                Timestamp = DateTime.UtcNow,
+                Version = "1.0.0"
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error checking webhook health");
+            return StatusCode(500, "Health check failed");
+        }
+    }
+
+    /// <summary>
+    /// Test webhook endpoint for validation
+    /// </summary>
+    /// <param name="repositoryName">Repository name to test</param>
+    /// <returns>Test result</returns>
+    [HttpPost("test/{repositoryName}")]
+    public async Task<IActionResult> TestWebhook(string repositoryName)
+    {
+        try
+        {
+            Logger.LogInformation("Testing webhook configuration for repository: {Repository}", repositoryName);
+
+            var webhookConfig = await _configService.GetWebhookConfigurationAsync(repositoryName);
+            if (webhookConfig == null)
+            {
+                return NotFound($"Webhook configuration not found for repository: {repositoryName}");
+            }
+
+            var testResult = new
+            {
+                Repository = repositoryName,
+                ConfigId = webhookConfig.Id,
+                IsActive = webhookConfig.IsActive,
+                Events = webhookConfig.Events.Split(','),
+                CreatedAt = webhookConfig.CreatedAt,
+                LastUpdated = webhookConfig.UpdatedAt,
+                TestTimestamp = DateTime.UtcNow
+            };
+
+            return Ok(testResult);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error testing webhook for repository: {Repository}", repositoryName);
+            return StatusCode(500, "Webhook test failed");
+        }
+    }
+
+    /// <summary>
+    /// Process workflow run event and trigger analysis if needed
+    /// </summary>
+    private async Task ProcessWorkflowRunEvent(GitHubWebhookPayload payload)
+    {
+        var workflowRun = payload.WorkflowRun;
+        var repository = payload.Repository;
+
+        // Only process completed workflow runs
+        if (workflowRun.Status != "completed")
+        {
+            Logger.LogDebug("Ignoring incomplete workflow run: {RunId}", workflowRun.Id);
+            return;
+        }
+
+        // Create CI/CD event record
+        var cicdEvent = new CiCdEvent
+        {
+            RepositoryName = repository.FullName,
+            RepositoryUrl = repository.HtmlUrl,
+            CommitHash = workflowRun.HeadSha,
+            Status = workflowRun.Status,
+            Conclusion = workflowRun.Conclusion,
+            WorkflowName = workflowRun.Name,
+            WorkflowRunId = workflowRun.Id,
+            RunUrl = workflowRun.HtmlUrl,
+            BranchName = workflowRun.HeadBranch,
+            TriggerActor = workflowRun.Actor?.Login,
+            ReceivedAt = DateTime.UtcNow
+        };
+
+        // Save the event
+        var savedEvent = await _eventRepository.CreateAsync(cicdEvent);
+        Logger.LogInformation("Created CI/CD event: {EventId} for workflow run: {RunId}", savedEvent.Id, workflowRun.Id);
+
+        // If it's a failure, trigger AI analysis
+        if (savedEvent.IsFailure)
+        {
+            Logger.LogInformation("Workflow run failed, triggering AI analysis: {RunId}", workflowRun.Id);
+
+            // Process failure asynchronously to avoid blocking the webhook response
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ProcessWorkflowFailure(savedEvent, repository, workflowRun);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Error processing workflow failure for run: {RunId}", workflowRun.Id);
+                }
+            });
+        }
+
+        // Send real-time notification
+        var activityItem = new ActivityFeedItem(
+            Type: savedEvent.IsFailure ? "pipeline_failure" : "pipeline_success",
+            Title: $"{workflowRun.Name} {(savedEvent.IsFailure ? "failed" : "succeeded")}",
+            Description: $"Commit {workflowRun.HeadSha[..8]} by {workflowRun.Actor?.Login}",
+            RepositoryName: repository.FullName,
+            Url: workflowRun.HtmlUrl,
+            Timestamp: DateTime.UtcNow
+        );
+
+        await _notificationService.SendActivityFeedUpdateAsync(activityItem);
+    }
+
+    /// <summary>
+    /// Process workflow failure with AI analysis
+    /// </summary>
+    private async Task ProcessWorkflowFailure(CiCdEvent cicdEvent, RepositoryInfo repository, WorkflowRunInfo workflowRun)
+    {
+        try
+        {
+            Logger.LogInformation("Processing workflow failure for analysis: {EventId}", cicdEvent.Id);
+
+            // Get failure context from GitHub
+            var (gitDiff, errorLog) = await _githubService.GetFailureContextAsync(
+                repository.Owner.Login,
+                repository.Name,
+                workflowRun.HeadSha,
+                workflowRun.Id);
+
+            // Combine context for AI analysis
+            var context = $"""
+                Repository: {repository.FullName}
+                Workflow: {workflowRun.Name}
+                Branch: {workflowRun.HeadBranch}
+                Commit: {workflowRun.HeadSha}
+                Actor: {workflowRun.Actor?.Login}
+
+                Git Diff:
+                {gitDiff}
+
+                Error Log:
+                {errorLog}
+                """;
+
+            // Generate AI analysis
+            var aiSuggestion = await _aiService.AnalyzeFailureAsync(context);
+
+            // Save AI analysis
+            var aiAnalysis = new AiAnalysis
+            {
+                CiCdEventId = cicdEvent.Id,
+                Analysis = aiSuggestion,
+                Context = context,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _analysisRepository.CreateAsync(aiAnalysis);
+
+            Logger.LogInformation("AI analysis completed for event: {EventId}", cicdEvent.Id);
+
+            // Send pipeline failure notification
+            var notification = new PipelineFailureNotification(
+                Repo: repository.FullName,
+                RepoUrl: repository.HtmlUrl,
+                CommitHash: workflowRun.HeadSha,
+                WorkflowName: workflowRun.Name,
+                RunUrl: workflowRun.HtmlUrl,
+                RunId: workflowRun.Id,
+                BranchName: workflowRun.HeadBranch,
+                Actor: workflowRun.Actor?.Login,
+                GitDiff: gitDiff,
+                ErrorLog: errorLog,
+                AiSuggestion: aiSuggestion,
+                Timestamp: DateTime.UtcNow
+            );
+
+            await _notificationService.SendPipelineFailureNotificationAsync(notification);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during workflow failure processing for event: {EventId}", cicdEvent.Id);
+        }
+    }
+}

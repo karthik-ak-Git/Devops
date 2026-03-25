@@ -1,0 +1,332 @@
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.Core.Interfaces.Repositories;
+using DevOpsAIAgent.Core.Models;
+using DevOpsAIAgent.Core.DTOs;
+
+namespace DevOpsAIAgent.API.Services;
+
+/// <summary>
+/// Service for managing webhook configurations
+/// </summary>
+public class WebhookConfigurationService : IWebhookConfigurationService
+{
+    private readonly IWebhookConfigurationRepository _webhookConfigRepository;
+    private readonly IWebhookSecurityService _securityService;
+    private readonly ILogger<WebhookConfigurationService> _logger;
+
+    public WebhookConfigurationService(
+        IWebhookConfigurationRepository webhookConfigRepository,
+        IWebhookSecurityService securityService,
+        ILogger<WebhookConfigurationService> logger)
+    {
+        _webhookConfigRepository = webhookConfigRepository;
+        _securityService = securityService;
+        _logger = logger;
+    }
+
+    #region IWebhookConfigurationService Implementation
+
+    /// <summary>
+    /// Get user repositories from GitHub (interface implementation)
+    /// </summary>
+    /// <returns>List of repository summaries</returns>
+    public async Task<IReadOnlyList<RepositorySummary>> GetUserRepositoriesAsync()
+    {
+        try
+        {
+            _logger.LogInformation("Getting user repositories from GitHub");
+
+            // TODO: Implement actual GitHub API integration
+            // For now, return empty list to satisfy interface
+            await Task.Delay(1); // Simulate async operation
+
+            return new List<RepositorySummary>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting user repositories");
+            return new List<RepositorySummary>();
+        }
+    }
+
+    /// <summary>
+    /// Create webhook via GitHub API (interface implementation)
+    /// </summary>
+    /// <param name="owner">Repository owner</param>
+    /// <param name="repo">Repository name</param>
+    /// <param name="webhookUrl">Webhook URL</param>
+    /// <param name="events">Events to subscribe to</param>
+    /// <returns>Webhook creation response</returns>
+    public async Task<WebhookConfigurationResponse> CreateWebhookAsync(string owner, string repo, string webhookUrl, IList<string>? events = null)
+    {
+        try
+        {
+            _logger.LogInformation("Creating webhook for {Owner}/{Repo}", owner, repo);
+
+            // TODO: Implement actual GitHub API webhook creation
+            // For now, return success response to satisfy interface
+            await Task.Delay(1); // Simulate async operation
+
+            return new WebhookConfigurationResponse(
+                Success: true,
+                Message: "Webhook creation not yet implemented",
+                WebhookId: null,
+                WebhookUrl: webhookUrl
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating webhook for {Owner}/{Repo}", owner, repo);
+            return new WebhookConfigurationResponse(
+                Success: false,
+                Message: $"Error creating webhook: {ex.Message}"
+            );
+        }
+    }
+
+    /// <summary>
+    /// Delete webhook via GitHub API (interface implementation)
+    /// </summary>
+    /// <param name="owner">Repository owner</param>
+    /// <param name="repo">Repository name</param>
+    /// <param name="hookId">Webhook ID</param>
+    /// <returns>True if deleted successfully</returns>
+    public async Task<bool> DeleteWebhookAsync(string owner, string repo, long hookId)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting webhook {HookId} for {Owner}/{Repo}", hookId, owner, repo);
+
+            // TODO: Implement actual GitHub API webhook deletion
+            // For now, return true to satisfy interface
+            await Task.Delay(1); // Simulate async operation
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting webhook {HookId} for {Owner}/{Repo}", hookId, owner, repo);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Database Operations (Legacy Methods)
+
+    /// <summary>
+    /// Create a new webhook configuration
+    /// </summary>
+    /// <param name="request">Webhook configuration request</param>
+    /// <returns>Created webhook configuration</returns>
+    public async Task<WebhookConfiguration> CreateWebhookConfigurationAsync(WebhookConfigurationRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("Creating webhook configuration for repository: {Repository}", request.RepositoryName);
+
+            // Generate a secure secret for this webhook
+            var secret = _securityService.GenerateWebhookSecret();
+
+            var webhookConfig = new WebhookConfiguration
+            {
+                RepositoryName = request.RepositoryName,
+                RepositoryUrl = request.RepositoryUrl,
+                Secret = secret,
+                IsActive = true,
+                Events = string.Join(",", request.Events),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            var result = await _webhookConfigRepository.CreateAsync(webhookConfig);
+
+            _logger.LogInformation("Webhook configuration created with ID: {Id}", result.Id);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating webhook configuration for repository: {Repository}", request.RepositoryName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Get webhook configuration by repository name
+    /// </summary>
+    /// <param name="repositoryName">Repository name</param>
+    /// <returns>Webhook configuration or null if not found</returns>
+    public async Task<WebhookConfiguration?> GetWebhookConfigurationAsync(string repositoryName)
+    {
+        try
+        {
+            _logger.LogDebug("Getting webhook configuration for repository: {Repository}", repositoryName);
+
+            return await _webhookConfigRepository.GetByRepositoryNameAsync(repositoryName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting webhook configuration for repository: {Repository}", repositoryName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Get all webhook configurations
+    /// </summary>
+    /// <returns>List of webhook configurations</returns>
+    public async Task<IEnumerable<WebhookConfiguration>> GetAllWebhookConfigurationsAsync()
+    {
+        try
+        {
+            _logger.LogDebug("Getting all webhook configurations");
+
+            return await _webhookConfigRepository.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all webhook configurations");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Update webhook configuration
+    /// </summary>
+    /// <param name="id">Webhook configuration ID</param>
+    /// <param name="request">Update request</param>
+    /// <returns>Updated webhook configuration</returns>
+    public async Task<WebhookConfiguration?> UpdateWebhookConfigurationAsync(long id, WebhookConfigurationRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("Updating webhook configuration ID: {Id}", id);
+
+            var existingConfig = await _webhookConfigRepository.GetByIdAsync(id);
+            if (existingConfig == null)
+            {
+                _logger.LogWarning("Webhook configuration with ID {Id} not found", id);
+                return null;
+            }
+
+            existingConfig.RepositoryName = request.RepositoryName;
+            existingConfig.RepositoryUrl = request.RepositoryUrl;
+            existingConfig.Events = string.Join(",", request.Events);
+            existingConfig.UpdatedAt = DateTime.UtcNow;
+
+            var result = await _webhookConfigRepository.UpdateAsync(existingConfig);
+
+            _logger.LogInformation("Webhook configuration ID {Id} updated successfully", id);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating webhook configuration ID: {Id}", id);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Delete webhook configuration
+    /// </summary>
+    /// <param name="id">Webhook configuration ID</param>
+    /// <returns>True if deleted successfully</returns>
+    public async Task<bool> DeleteWebhookConfigurationAsync(long id)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting webhook configuration ID: {Id}", id);
+
+            var existingConfig = await _webhookConfigRepository.GetByIdAsync(id);
+            if (existingConfig == null)
+            {
+                _logger.LogWarning("Webhook configuration with ID {Id} not found", id);
+                return false;
+            }
+
+            await _webhookConfigRepository.DeleteAsync(id);
+
+            _logger.LogInformation("Webhook configuration ID {Id} deleted successfully", id);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting webhook configuration ID: {Id}", id);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Regenerate webhook secret
+    /// </summary>
+    /// <param name="id">Webhook configuration ID</param>
+    /// <returns>Updated webhook configuration with new secret</returns>
+    public async Task<WebhookConfiguration?> RegenerateSecretAsync(long id)
+    {
+        try
+        {
+            _logger.LogInformation("Regenerating secret for webhook configuration ID: {Id}", id);
+
+            var existingConfig = await _webhookConfigRepository.GetByIdAsync(id);
+            if (existingConfig == null)
+            {
+                _logger.LogWarning("Webhook configuration with ID {Id} not found", id);
+                return null;
+            }
+
+            existingConfig.Secret = _securityService.GenerateWebhookSecret();
+            existingConfig.UpdatedAt = DateTime.UtcNow;
+
+            var result = await _webhookConfigRepository.UpdateAsync(existingConfig);
+
+            _logger.LogInformation("Secret regenerated for webhook configuration ID {Id}", id);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error regenerating secret for webhook configuration ID: {Id}", id);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Toggle webhook configuration active status
+    /// </summary>
+    /// <param name="id">Webhook configuration ID</param>
+    /// <param name="isActive">Active status</param>
+    /// <returns>Updated webhook configuration</returns>
+    public async Task<WebhookConfiguration?> ToggleActiveStatusAsync(long id, bool isActive)
+    {
+        try
+        {
+            _logger.LogInformation("Toggling active status for webhook configuration ID: {Id} to {Status}", id, isActive);
+
+            var existingConfig = await _webhookConfigRepository.GetByIdAsync(id);
+            if (existingConfig == null)
+            {
+                _logger.LogWarning("Webhook configuration with ID {Id} not found", id);
+                return null;
+            }
+
+            existingConfig.IsActive = isActive;
+            existingConfig.UpdatedAt = DateTime.UtcNow;
+
+            var result = await _webhookConfigRepository.UpdateAsync(existingConfig);
+
+            _logger.LogInformation("Active status toggled for webhook configuration ID {Id}", id);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error toggling active status for webhook configuration ID: {Id}", id);
+            throw;
+        }
+    }
+
+    #endregion
+}

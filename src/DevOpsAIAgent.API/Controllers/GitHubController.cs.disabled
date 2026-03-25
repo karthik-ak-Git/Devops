@@ -1,0 +1,125 @@
+using Microsoft.AspNetCore.Mvc;
+
+namespace DevOpsAIAgent.API.Controllers
+{
+    /// <summary>
+    /// GitHub integration endpoints
+    /// </summary>
+    public class GitHubController : BaseApiController
+    {
+        public GitHubController(ILogger<GitHubController> logger) : base(logger)
+        {
+        }
+
+        /// <summary>
+        /// Get repository information
+        /// </summary>
+        /// <param name="owner">Repository owner</param>
+        /// <param name="repo">Repository name</param>
+        /// <returns>Repository information</returns>
+        [HttpGet("repository/{owner}/{repo}")]
+        public async Task<IActionResult> GetRepository(string owner, string repo)
+        {
+            try
+            {
+                Logger.LogInformation("Getting repository information for {Owner}/{Repo}", owner, repo);
+
+                // TODO: Implement actual GitHub API integration
+                var repositoryInfo = new
+                {
+                    Owner = owner,
+                    Name = repo,
+                    Description = "Sample repository description",
+                    Language = "C#",
+                    Stars = 42,
+                    Forks = 7,
+                    IsPrivate = false,
+                    CreatedAt = DateTime.UtcNow.AddYears(-1),
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                return SuccessResponse(repositoryInfo, "Repository information retrieved successfully");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error getting repository information for {Owner}/{Repo}", owner, repo);
+                return ErrorResponse("Failed to retrieve repository information", 500);
+            }
+        }
+
+        /// <summary>
+        /// Webhook endpoint for GitHub events
+        /// </summary>
+        /// <param name="payload">GitHub webhook payload</param>
+        /// <returns>Processing result</returns>
+        [HttpPost("webhook")]
+        public async Task<IActionResult> HandleWebhook([FromBody] object payload)
+        {
+            try
+            {
+                Logger.LogInformation("Received GitHub webhook");
+
+                // TODO: Implement webhook processing logic
+                // This would typically involve:
+                // - Validating the webhook signature
+                // - Parsing the payload
+                // - Triggering appropriate analysis workflows
+
+                return SuccessResponse(new { Processed = true }, "Webhook processed successfully");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error processing GitHub webhook");
+                return ErrorResponse("Failed to process webhook", 500);
+            }
+        }
+
+        /// <summary>
+        /// Get pull requests for a repository
+        /// </summary>
+        /// <param name="owner">Repository owner</param>
+        /// <param name="repo">Repository name</param>
+        /// <param name="state">PR state (open, closed, all)</param>
+        /// <returns>List of pull requests</returns>
+        [HttpGet("repository/{owner}/{repo}/pull-requests")]
+        public async Task<IActionResult> GetPullRequests(string owner, string repo, string state = "open")
+        {
+            try
+            {
+                Logger.LogInformation("Getting pull requests for {Owner}/{Repo} with state {State}", owner, repo, state);
+
+                // TODO: Implement actual GitHub API integration
+                var pullRequests = new[]
+                {
+                    new
+                    {
+                        Id = 1,
+                        Number = 123,
+                        Title = "Add new feature",
+                        State = "open",
+                        Author = "developer1",
+                        CreatedAt = DateTime.UtcNow.AddDays(-3),
+                        UpdatedAt = DateTime.UtcNow.AddHours(-2)
+                    },
+                    new
+                    {
+                        Id = 2,
+                        Number = 124,
+                        Title = "Fix bug in authentication",
+                        State = "open",
+                        Author = "developer2",
+                        CreatedAt = DateTime.UtcNow.AddDays(-1),
+                        UpdatedAt = DateTime.UtcNow.AddHours(-1)
+                    }
+                };
+
+                return SuccessResponse(pullRequests, $"Pull requests retrieved successfully for {owner}/{repo}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error getting pull requests for {Owner}/{Repo}", owner, repo);
+                return ErrorResponse("Failed to retrieve pull requests", 500);
+            }
+        }
+    }
+}

@@ -1,0 +1,380 @@
+using Mscc.GenerativeAI;
+using DevOpsAIAgent.Core.Interfaces.Services;
+using DevOpsAIAgent.Core.Models.Configuration;
+using Microsoft.Extensions.Options;
+
+namespace DevOpsAIAgent.API.Services;
+
+/// <summary>
+/// Service for AI analysis using Google's Gemini API
+/// </summary>
+public class GeminiAssistantService : IAIAssistantService
+{
+    private readonly ILogger<GeminiAssistantService> _logger;
+    private readonly LlmConfiguration _llmConfig;
+    private readonly GoogleAI _geminiClient;
+
+    public GeminiAssistantService(
+        ILogger<GeminiAssistantService> logger,
+        IOptions<LlmConfiguration> llmConfig)
+    {
+        _logger = logger;
+        _llmConfig = llmConfig.Value;
+
+        var apiKey = _llmConfig.Gemini?.ApiKey ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            throw new InvalidOperationException("Gemini API key is not configured");
+        }
+
+        _geminiClient = new GoogleAI(apiKey);
+    }
+
+    /// <summary>
+    /// Analyze CI/CD failure and provide resolution suggestions
+    /// </summary>
+    /// <param name="errorLog">Error log from the failed operation</param>
+    /// <param name="gitDiff">Git diff showing recent changes</param>
+    /// <returns>AI-generated analysis and suggestions</returns>
+    public async Task<string> AnalyzeFailureAsync(string errorLog, string gitDiff)
+    {
+        try
+        {
+            var context = $"Error Log:\n{errorLog}\n\nGit Diff:\n{gitDiff}";
+            _logger.LogInformation("Starting AI analysis of failure context (length: {ContextLength})", context.Length);
+
+            var prompt = BuildAnalysisPrompt(context);
+
+            var model = _geminiClient.GenerativeModel(
+                model: _llmConfig.Gemini?.ModelName ?? "gemini-1.5-pro-latest");
+
+            var response = await model.GenerateContentAsync(prompt);
+
+            var analysis = response?.Text ?? "Unable to generate analysis";
+
+            _logger.LogInformation("AI analysis completed, response length: {ResponseLength}", analysis.Length);
+
+            return analysis;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during AI failure analysis");
+            return "Error occurred during AI analysis. Please check the logs and try again.";
+        }
+    }
+
+    /// <summary>
+    /// Suggest incident resolution based on description and similar past analyses
+    /// </summary>
+    /// <param name="incidentDescription">Description of the current incident</param>
+    /// <param name="similarPastAnalyses">Similar past incident analyses</param>
+    /// <returns>AI-generated incident resolution suggestions</returns>
+    public async Task<string> SuggestIncidentResolutionAsync(string incidentDescription, IEnumerable<string> similarPastAnalyses)
+    {
+        try
+        {
+            _logger.LogInformation("Generating incident resolution suggestions");
+
+            var pastAnalysesText = string.Join("\n---\n", similarPastAnalyses);
+            var prompt = BuildIncidentResolutionPrompt(incidentDescription, pastAnalysesText);
+
+            var model = _geminiClient.GenerativeModel(
+                model: _llmConfig.Gemini?.ModelName ?? "gemini-1.5-pro-latest");
+
+            var response = await model.GenerateContentAsync(prompt);
+
+            var suggestions = response?.Text ?? "Unable to generate incident resolution suggestions";
+
+            _logger.LogInformation("Incident resolution suggestions generated, response length: {ResponseLength}",
+                suggestions.Length);
+
+            return suggestions;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating incident resolution suggestions");
+            return "Error occurred during incident resolution suggestion generation. Please check the logs and try again.";
+        }
+    }
+
+    /// <summary>
+    /// Analyze CI/CD failure (legacy method for backward compatibility)
+    /// </summary>
+    /// <param name="context">Failure context including git diff and error logs</param>
+    /// <returns>AI-generated analysis and suggestions</returns>
+    public async Task<string> AnalyzeFailureAsync(string context)
+    {
+        try
+        {
+            _logger.LogInformation("Starting AI analysis of failure context (length: {ContextLength})", context.Length);
+
+            var prompt = BuildAnalysisPrompt(context);
+
+            var model = _geminiClient.GenerativeModel(
+                model: _llmConfig.Gemini?.ModelName ?? "gemini-1.5-pro-latest");
+
+            var response = await model.GenerateContentAsync(prompt);
+
+            var analysis = response?.Text ?? "Unable to generate analysis";
+
+            _logger.LogInformation("AI analysis completed, response length: {ResponseLength}", analysis.Length);
+
+            return analysis;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during AI failure analysis");
+            return "Error occurred during AI analysis. Please check the logs and try again.";
+        }
+    }
+
+    /// <summary>
+    /// Generate deployment recommendations based on historical data
+    /// </summary>
+    /// <param name="deploymentHistory">Historical deployment data</param>
+    /// <param name="currentContext">Current deployment context</param>
+    /// <returns>AI-generated deployment recommendations</returns>
+    public async Task<string> GenerateDeploymentRecommendationsAsync(string deploymentHistory, string currentContext)
+    {
+        try
+        {
+            _logger.LogInformation("Generating deployment recommendations");
+
+            var prompt = BuildDeploymentRecommendationPrompt(deploymentHistory, currentContext);
+
+            var model = _geminiClient.GenerativeModel(
+                model: _llmConfig.Gemini?.ModelName ?? "gemini-1.5-pro-latest");
+
+            var response = await model.GenerateContentAsync(prompt);
+
+            var recommendations = response?.Text ?? "Unable to generate recommendations";
+
+            _logger.LogInformation("Deployment recommendations generated, response length: {ResponseLength}",
+                recommendations.Length);
+
+            return recommendations;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating deployment recommendations");
+            return "Error occurred during recommendation generation. Please check the logs and try again.";
+        }
+    }
+
+    /// <summary>
+    /// Analyze incident patterns and suggest preventive measures
+    /// </summary>
+    /// <param name="incidentHistory">Historical incident data</param>
+    /// <returns>AI-generated pattern analysis and prevention suggestions</returns>
+    public async Task<string> AnalyzeIncidentPatternsAsync(string incidentHistory)
+    {
+        try
+        {
+            _logger.LogInformation("Analyzing incident patterns");
+
+            var prompt = BuildIncidentPatternAnalysisPrompt(incidentHistory);
+
+            var model = _geminiClient.GenerativeModel(
+                model: _llmConfig.Gemini?.ModelName ?? "gemini-1.5-pro-latest");
+
+            var response = await model.GenerateContentAsync(prompt);
+
+            var analysis = response?.Text ?? "Unable to analyze incident patterns";
+
+            _logger.LogInformation("Incident pattern analysis completed, response length: {ResponseLength}",
+                analysis.Length);
+
+            return analysis;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error analyzing incident patterns");
+            return "Error occurred during incident pattern analysis. Please check the logs and try again.";
+        }
+    }
+
+    /// <summary>
+    /// Build comprehensive failure analysis prompt
+    /// </summary>
+    private static string BuildAnalysisPrompt(string context)
+    {
+        return $"""
+            You are an expert DevOps engineer and software architect analyzing a CI/CD pipeline failure.
+            Your task is to provide a comprehensive analysis and actionable resolution suggestions.
+
+            ## Context
+            {context}
+
+            ## Analysis Requirements
+            Please provide a structured analysis with the following sections:
+
+            ### 1. Failure Summary
+            - Identify the primary cause of failure
+            - Classify the failure type (build, test, deployment, infrastructure, etc.)
+            - Assess the severity and impact
+
+            ### 2. Root Cause Analysis
+            - Examine the git diff for potential issues
+            - Analyze error logs for specific failure points
+            - Identify contributing factors
+
+            ### 3. Immediate Resolution Steps
+            - Provide step-by-step fix instructions
+            - Include specific commands or code changes if applicable
+            - Prioritize by urgency and ease of implementation
+
+            ### 4. Prevention Measures
+            - Suggest process improvements
+            - Recommend additional testing or validation
+            - Propose infrastructure or configuration changes
+
+            ### 5. Learning Opportunities
+            - Identify knowledge gaps or training needs
+            - Suggest documentation updates
+            - Recommend best practices to prevent recurrence
+
+            Please be specific, actionable, and consider both immediate fixes and long-term improvements.
+            Focus on practical solutions that can be implemented by the development team.
+            """;
+    }
+
+    /// <summary>
+    /// Build deployment recommendation prompt
+    /// </summary>
+    private static string BuildDeploymentRecommendationPrompt(string deploymentHistory, string currentContext)
+    {
+        return $"""
+            You are an expert DevOps consultant analyzing deployment patterns to provide strategic recommendations.
+
+            ## Deployment History
+            {deploymentHistory}
+
+            ## Current Context
+            {currentContext}
+
+            ## Recommendation Requirements
+            Based on the deployment history and current context, provide:
+
+            ### 1. Risk Assessment
+            - Identify potential deployment risks
+            - Assess readiness for deployment
+            - Highlight any concerning patterns
+
+            ### 2. Timing Recommendations
+            - Optimal deployment windows
+            - Considerations for business impact
+            - Rollback preparation assessment
+
+            ### 3. Process Improvements
+            - Deployment pipeline optimizations
+            - Testing and validation enhancements
+            - Monitoring and observability suggestions
+
+            ### 4. Success Metrics
+            - Key performance indicators to monitor
+            - Success criteria definition
+            - Rollback triggers and thresholds
+
+            Provide actionable, data-driven recommendations that improve deployment success rates and reduce risk.
+            """;
+    }
+
+    /// <summary>
+    /// Build incident pattern analysis prompt
+    /// </summary>
+    private static string BuildIncidentPatternAnalysisPrompt(string incidentHistory)
+    {
+        return $"""
+            You are a site reliability engineering (SRE) expert analyzing incident patterns to identify systemic issues and prevention strategies.
+
+            ## Incident History
+            {incidentHistory}
+
+            ## Pattern Analysis Requirements
+            Analyze the incident data and provide:
+
+            ### 1. Pattern Identification
+            - Recurring failure modes
+            - Time-based patterns (daily, weekly, seasonal)
+            - Component or service patterns
+            - Human factor patterns
+
+            ### 2. Impact Analysis
+            - Frequency and severity trends
+            - Business impact assessment
+            - Recovery time patterns
+            - Escalation patterns
+
+            ### 3. System Reliability Insights
+            - Identify single points of failure
+            - Capacity and scaling issues
+            - Configuration and deployment risks
+            - Monitoring and alerting gaps
+
+            ### 4. Prevention Strategy
+            - Proactive monitoring improvements
+            - Infrastructure hardening recommendations
+            - Process and procedure updates
+            - Training and knowledge sharing needs
+
+            ### 5. Metrics and KPIs
+            - Reliability metrics to track
+            - Early warning indicators
+            - Success measures for improvements
+
+            Focus on systemic improvements that enhance overall system reliability and reduce incident frequency.
+            """;
+    }
+
+    /// <summary>
+    /// Build incident resolution prompt
+    /// </summary>
+    private static string BuildIncidentResolutionPrompt(string incidentDescription, string similarPastAnalyses)
+    {
+        return $"""
+            You are an expert incident response engineer analyzing a current incident and similar past incidents to provide targeted resolution suggestions.
+
+            ## Current Incident Description
+            {incidentDescription}
+
+            ## Similar Past Analyses
+            {similarPastAnalyses}
+
+            ## Resolution Requirements
+            Based on the current incident and similar past analyses, provide:
+
+            ### 1. Immediate Actions
+            - Critical steps to mitigate the current incident
+            - Emergency rollback procedures if applicable
+            - System stabilization measures
+            - Communication recommendations
+
+            ### 2. Diagnostic Steps
+            - Key logs and metrics to examine
+            - System health checks to perform
+            - Performance indicators to monitor
+            - Configuration items to verify
+
+            ### 3. Root Cause Analysis
+            - Likely causes based on similar incidents
+            - System components to investigate
+            - Common failure patterns to check
+            - Dependencies to examine
+
+            ### 4. Resolution Strategy
+            - Step-by-step fix procedures
+            - Testing and validation approaches
+            - Gradual recovery recommendations
+            - Risk mitigation measures
+
+            ### 5. Prevention Measures
+            - Monitoring improvements to implement
+            - Process changes to prevent recurrence
+            - System hardening recommendations
+            - Knowledge sharing opportunities
+
+            Provide specific, actionable guidance that builds upon lessons learned from similar past incidents.
+            Focus on rapid resolution while ensuring system stability and preventing recurrence.
+            """;
+    }
+}
